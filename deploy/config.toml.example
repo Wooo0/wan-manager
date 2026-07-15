@@ -1,0 +1,18 @@
+[server]
+# HTTP 服务监听地址
+listen_addr = ":8899"
+
+[collector]
+# 数据采集间隔（秒）
+interval = 2
+
+# WAN 口配置
+[[wan]]
+name = "wan1"
+interface = "pppoe-wan"
+label = "电信 WAN1"
+
+[[wan]]
+name = "wan2"
+interface = "pppoe-wan_2"
+label = "联通 WAN2"

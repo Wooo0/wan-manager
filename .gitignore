@@ -1,0 +1,19 @@
+# Go
+bin/
+dist/
+*.exe
+*.out
+*.test
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

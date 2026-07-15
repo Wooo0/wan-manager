@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: 获取版本号
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="dev-$(echo $GITHUB_SHA | cut -c1-7)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION=$VERSION"
+
+      - name: 编译 ARM64
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-s -w -X main.version=${{ steps.version.outputs.version }}" \
+            -o dist/wan-manager \
+            ./cmd/wan-manager
+
+      - name: 打包发布文件
+        run: |
+          cd dist
+          tar -czf wan-manager-linux-arm64.tar.gz wan-manager
+          cd ..
+          cp deploy/config.toml.example dist/
+          cp scripts/install.sh dist/
+          cp scripts/wan-manager.sh dist/
+          cp deploy/S99wan-manager dist/
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: wan-manager-linux-arm64
+          path: dist/*
+
+      - name: 创建 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/wan-manager-linux-arm64.tar.gz
+            dist/install.sh
+            dist/wan-manager.sh
+          generate_release_notes: true
