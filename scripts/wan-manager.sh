@@ -86,7 +86,13 @@ is_running() {
 
 get_current_version() {
     if [ -f "$BINARY" ]; then
-        "$BINARY" --version 2>/dev/null | awk '{print $2}'
+        # 加超时保护，避免二进制卡住阻塞脚本
+        ver=$(timeout 3 "$BINARY" --version 2>/dev/null | awk '{print $2}')
+        if [ -n "$ver" ]; then
+            echo "$ver"
+        else
+            echo "未知"
+        fi
     else
         echo "未安装"
     fi
@@ -144,10 +150,15 @@ get_run_time() {
 }
 
 get_listen_port() {
+    port=""
     if [ -f "$CONFIG_FILE" ]; then
-        grep 'listen_addr' "$CONFIG_FILE" 2>/dev/null | awk -F'=' '{print $2}' | tr -d ' "' | awk -F':' '{print $2}'
+        port=$(grep 'listen_addr' "$CONFIG_FILE" 2>/dev/null | awk -F'=' '{print $2}' | tr -d ' "' | awk -F':' '{print $2}')
     fi
-    echo "8899"
+    if [ -n "$port" ]; then
+        echo "$port"
+    else
+        echo "8899"
+    fi
 }
 
 get_router_ip() {

@@ -21,6 +21,14 @@ func main() {
 	showVersion := flag.Bool("version", false, "显示版本")
 	flag.Parse()
 
+	// 兼容 --version（Go flag 包默认只识别 -version，这里手动转换）
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" {
+			*showVersion = true
+			break
+		}
+	}
+
 	if *showVersion {
 		fmt.Printf("wan-manager %s\n", version)
 		return
