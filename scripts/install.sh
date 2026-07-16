@@ -56,6 +56,16 @@ print_separator() {
     echo -e "${CYAN}──────────────────────────────────────────────────────${NC}"
 }
 
+# 交互式读取（兼容 curl|sh 管道模式：从 /dev/tty 读取，避免抢占脚本 stdin）
+# 非交互环境（无 /dev/tty）返回非零，调用方走默认值
+read_input() {
+    if [ -e /dev/tty ]; then
+        read "$@" < /dev/tty
+    else
+        return 1
+    fi
+}
+
 get_latest_version() {
     if command -v curl >/dev/null 2>&1; then
         VERSION=$(curl -sL "$GITHUB_API" 2>/dev/null | grep '"tag_name"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
@@ -95,7 +105,6 @@ select_install_path() {
         return 0
     fi
 
-    print_banner
     echo -e "  ${WHITE}${BOLD}◆ 选择安装路径${NC}"
     print_separator
     echo ""
@@ -109,25 +118,25 @@ select_install_path() {
     echo ""
     print_separator
     printf "  请选择 [1-2] (默认 1): "
-    read -r path_choice
+    read_input -r path_choice
 
     case "$path_choice" in
         2)
             echo ""
             printf "  程序安装目录 ${GRAY}[/usr/bin]${NC}: "
-            read -r custom_install
+            read_input -r custom_install
             if [ -n "$custom_install" ]; then
                 INSTALL_DIR="$custom_install"
             fi
 
             printf "  配置文件目录 ${GRAY}[/etc/wan-manager]${NC}: "
-            read -r custom_config
+            read_input -r custom_config
             if [ -n "$custom_config" ]; then
                 CONFIG_DIR="$custom_config"
             fi
 
             printf "  启动脚本目录 ${GRAY}[/etc/init.d]${NC}: "
-            read -r custom_init
+            read_input -r custom_init
             if [ -n "$custom_init" ]; then
                 INIT_DIR="$custom_init"
             fi
@@ -139,7 +148,7 @@ select_install_path() {
             echo -e "    启动: ${WHITE}${INIT_DIR}/S99wan-manager${NC}"
             echo ""
             printf "  确认? [Y/n]: "
-            read -r confirm
+            read_input -r confirm
             case "$confirm" in
                 [nN]|[nN][oO])
                     echo -e "  ${YELLOW}已取消，重新选择${NC}"
@@ -352,7 +361,7 @@ print_separator
 # 询问是否立即启动并进入管理面板
 echo ""
 printf "  ${GREEN}是否立即启动服务并进入管理面板? [Y/n]: ${NC}"
-read -r choice
+read_input -r choice
 
 case "$choice" in
     [nN]|[nN][oO])
