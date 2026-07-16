@@ -14,6 +14,21 @@ PID_FILE="/var/run/wan-manager.pid"
 BINARY="${INSTALL_DIR}/wan-manager"
 SCRIPT_NAME="wan-manager"
 
+# 路径自检：如果脚本不在默认 INSTALL_DIR，说明是自定义安装，自动切换到脚本所在目录
+# 避免 update 时重置路径导致写入 /usr/bin（小米路由器该路径只读）
+_script_self="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+_script_dir="$(dirname "$_script_self")"
+if [ "$_script_dir" != "/usr/bin" ] && [ -n "$_script_dir" ]; then
+    # 脚本所在目录就是 INSTALL_DIR
+    INSTALL_DIR="$_script_dir"
+    BINARY="${INSTALL_DIR}/wan-manager"
+    # 配置目录优先用同级 etc，不存在则回退默认
+    if [ -d "${INSTALL_DIR}/etc" ]; then
+        CONFIG_DIR="${INSTALL_DIR}/etc"
+    fi
+    CONFIG_FILE="${CONFIG_DIR}/config.toml"
+fi
+
 GITHUB_REPO="Wooo0/wan-manager"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
@@ -621,6 +636,10 @@ update_service() {
     echo -e "  正在更新管理脚本..."
     download_file "${GITHUB_RAW}/scripts/wan-manager.sh" "${INSTALL_DIR}/wan-manager.sh"
     chmod +x "${INSTALL_DIR}/wan-manager.sh"
+    # 保持当前安装路径不变（避免新脚本重置为默认路径 /usr/bin）
+    sed -i "s|INSTALL_DIR=\"/usr/bin\"|INSTALL_DIR=\"${INSTALL_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh" 2>/dev/null
+    sed -i "s|CONFIG_DIR=\"/etc/wan-manager\"|CONFIG_DIR=\"${CONFIG_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh" 2>/dev/null
+    sed -i "s|INIT_SCRIPT=\"/etc/init.d/S99wan-manager\"|INIT_SCRIPT=\"${INIT_SCRIPT}\"|g" "${INSTALL_DIR}/wan-manager.sh" 2>/dev/null
 
     if [ ! -f "$CONFIG_FILE" ]; then
         mkdir -p "$CONFIG_DIR"
