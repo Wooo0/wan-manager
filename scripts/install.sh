@@ -7,13 +7,18 @@
 #  用法:
 #    curl -sSL https://raw.githubusercontent.com/Wooo0/wan-manager/main/scripts/install.sh | sh
 #    wget -qO- https://raw.githubusercontent.com/Wooo0/wan-manager/main/scripts/install.sh | sh
+#
+#  自定义安装目录:
+#    curl -sSL ... | WM_INSTALL_DIR=/opt/wan-manager sh
+#    curl -sSL ... | WM_INSTALL_DIR=/opt/wan-manager WM_CONFIG_DIR=/opt/wan-manager/etc sh
 #============================================================
 
 set -e
 
-INSTALL_DIR="/usr/bin"
-CONFIG_DIR="/etc/wan-manager"
-INIT_DIR="/etc/init.d"
+# 支持环境变量自定义安装路径
+INSTALL_DIR="${WM_INSTALL_DIR:-/usr/bin}"
+CONFIG_DIR="${WM_CONFIG_DIR:-/etc/wan-manager}"
+INIT_DIR="${WM_INIT_DIR:-/etc/init.d}"
 BINARY_NAME="wan-manager"
 SERVICE_NAME="wan-manager"
 SCRIPT_NAME="wan-manager.sh"
@@ -28,6 +33,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
+GRAY='\033[1;30m'
 BOLD='\033[1m'
 NC='\033[0m'
 
@@ -80,6 +86,75 @@ get_router_ip() {
 }
 
 #============================================================
+#  交互式路径选择
+#============================================================
+
+select_install_path() {
+    # 如果环境变量已设置，跳过交互
+    if [ -n "$WM_INSTALL_DIR" ]; then
+        return 0
+    fi
+
+    print_banner
+    echo -e "  ${WHITE}${BOLD}◆ 选择安装路径${NC}"
+    print_separator
+    echo ""
+    echo -e "    ${WHITE}1.${NC} 默认路径 ${GRAY}(推荐)${NC}"
+    echo -e "       程序: /usr/bin/wan-manager"
+    echo -e "       配置: /etc/wan-manager/"
+    echo -e "       启动: /etc/init.d/S99wan-manager"
+    echo ""
+    echo -e "    ${WHITE}2.${NC} 自定义路径"
+    echo -e "       自行指定程序、配置、启动脚本的安装位置"
+    echo ""
+    print_separator
+    printf "  请选择 [1-2] (默认 1): "
+    read -r path_choice
+
+    case "$path_choice" in
+        2)
+            echo ""
+            printf "  程序安装目录 ${GRAY}[/usr/bin]${NC}: "
+            read -r custom_install
+            if [ -n "$custom_install" ]; then
+                INSTALL_DIR="$custom_install"
+            fi
+
+            printf "  配置文件目录 ${GRAY}[/etc/wan-manager]${NC}: "
+            read -r custom_config
+            if [ -n "$custom_config" ]; then
+                CONFIG_DIR="$custom_config"
+            fi
+
+            printf "  启动脚本目录 ${GRAY}[/etc/init.d]${NC}: "
+            read -r custom_init
+            if [ -n "$custom_init" ]; then
+                INIT_DIR="$custom_init"
+            fi
+
+            echo ""
+            echo -e "  ${CYAN}安装路径确认:${NC}"
+            echo -e "    程序: ${WHITE}${INSTALL_DIR}/${BINARY_NAME}${NC}"
+            echo -e "    配置: ${WHITE}${CONFIG_DIR}/config.toml${NC}"
+            echo -e "    启动: ${WHITE}${INIT_DIR}/S99wan-manager${NC}"
+            echo ""
+            printf "  确认? [Y/n]: "
+            read -r confirm
+            case "$confirm" in
+                [nN]|[nN][oO])
+                    echo -e "  ${YELLOW}已取消，重新选择${NC}"
+                    sleep 1
+                    select_install_path
+                    ;;
+            esac
+            ;;
+        *)
+            # 默认路径，无需操作
+            ;;
+    esac
+}
+
+#============================================================
 #  主安装流程
 #============================================================
 
@@ -125,6 +200,9 @@ else
     exit 1
 fi
 echo -e "  下载工具: ${WHITE}$DOWNLOADER${NC}"
+
+# 交互式选择安装路径
+select_install_path
 
 print_separator
 echo ""
@@ -207,6 +285,9 @@ fi
 # 下载启动脚本
 if download_file "${GITHUB_RAW}/deploy/S99wan-manager" "${INIT_DIR}/S99wan-manager"; then
     chmod +x "${INIT_DIR}/S99wan-manager"
+    # 替换启动脚本中的默认路径
+    sed -i "s|/usr/bin/wan-manager|${INSTALL_DIR}/${BINARY_NAME}|g" "${INIT_DIR}/S99wan-manager" 2>/dev/null
+    sed -i "s|/etc/wan-manager/config.toml|${CONFIG_DIR}/config.toml|g" "${INIT_DIR}/S99wan-manager" 2>/dev/null
     echo -e "  ${GREEN}✓${NC} 启动脚本: ${INIT_DIR}/S99wan-manager"
 
     # 设置开机自启
@@ -221,6 +302,10 @@ fi
 # 下载管理脚本
 if download_file "${GITHUB_RAW}/scripts/wan-manager.sh" "${INSTALL_DIR}/${SCRIPT_NAME}"; then
     chmod +x "${INSTALL_DIR}/${SCRIPT_NAME}"
+    # 替换管理脚本中的默认路径
+    sed -i "s|INSTALL_DIR=\"/usr/bin\"|INSTALL_DIR=\"${INSTALL_DIR}\"|g" "${INSTALL_DIR}/${SCRIPT_NAME}" 2>/dev/null
+    sed -i "s|CONFIG_DIR=\"/etc/wan-manager\"|CONFIG_DIR=\"${CONFIG_DIR}\"|g" "${INSTALL_DIR}/${SCRIPT_NAME}" 2>/dev/null
+    sed -i "s|INIT_SCRIPT=\"/etc/init.d/S99wan-manager\"|INIT_SCRIPT=\"${INIT_DIR}/S99wan-manager\"|g" "${INSTALL_DIR}/${SCRIPT_NAME}" 2>/dev/null
     echo -e "  ${GREEN}✓${NC} 管理脚本: ${INSTALL_DIR}/${SCRIPT_NAME}"
 else
     echo -e "  ${YELLOW}⚠${NC} 管理脚本下载失败"
