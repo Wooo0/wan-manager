@@ -104,8 +104,8 @@ is_running() {
 
 get_current_version() {
     if [ -f "$BINARY" ]; then
-        # 加超时保护，避免二进制卡住阻塞脚本
-        ver=$(timeout 3 "$BINARY" --version 2>/dev/null | awk '{print $2}')
+        # v0.1.1 已修复 --version 参数识别，二进制不会卡住，无需 timeout 保护
+        ver=$("$BINARY" --version 2>/dev/null | awk '{print $2}')
         if [ -n "$ver" ]; then
             echo "$ver"
         else
@@ -390,13 +390,17 @@ show_logs() {
     print_separator
     echo ""
 
-    if [ ! -f "$LOG_FILE" ]; then
-        echo -e "  ${YELLOW}日志文件不存在${NC}"
+    # 优先读日志文件，不存在则回退到 syslog（procd 启动时日志在 syslog）
+    if [ -f "$LOG_FILE" ]; then
+        tail -n "$lines" "$LOG_FILE" | sed 's/^/  /'
+    elif command -v logread >/dev/null 2>&1; then
+        # 从 syslog 过滤 wan-manager 相关日志
+        logread | grep -i "wan-manager" | tail -n "$lines" | sed 's/^/  /'
+    else
+        echo -e "  ${YELLOW}日志文件不存在，且 logread 命令不可用${NC}"
         pause
         return
     fi
-
-    tail -n "$lines" "$LOG_FILE" | sed 's/^/  /'
 
     echo ""
     print_separator

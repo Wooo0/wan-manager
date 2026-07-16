@@ -17,9 +17,9 @@ start_service() {
     procd_set_param command "$PROG" -config "$CONFIG"
     procd_set_param respawn 3600 5 5
     procd_set_param pidfile "$PIDFILE"
+    # stdout/stderr 输出到 syslog（procd 标准方式，可用 logread 查看）
     procd_set_param stdout 1
     procd_set_param stderr 1
-    # 日志输出到文件（procd 不直接支持文件重定向，用 shell 包裹）
     procd_close_instance
 }
 
