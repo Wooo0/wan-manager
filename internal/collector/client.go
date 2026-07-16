@@ -62,11 +62,11 @@ func (c *ClientCollector) GetClients() []ClientInfo {
 func (c *ClientCollector) collect() {
 	wifiClients := collectWifiClients()
 	arpMap := collectARPMap()
-	nameMap := collectDHCPNames()
+	dhcpMap := collectDHCPMap()
 
 	// 调试日志：打印采集到的数据量
 	log.Printf("采集到 %d 个 WiFi 客户端，ARP 表 %d 条，DHCP 租约 %d 条",
-		len(wifiClients), len(arpMap), len(nameMap))
+		len(wifiClients), len(arpMap), len(dhcpMap))
 
 	seen := make(map[string]bool)
 	var result []ClientInfo
@@ -78,14 +78,20 @@ func (c *ClientCollector) collect() {
 		}
 		seen[mac] = true
 
+		// 优先从 ARP 表获取 IP，否则从 DHCP 租约获取
 		if arp, ok := arpMap[mac]; ok {
 			wc.IP = arp.IP
-			log.Printf("WiFi 客户端 %s 匹配到 ARP 条目，IP: %s", mac, arp.IP)
+			log.Printf("WiFi 客户端 %s 从 ARP 表获取 IP: %s", mac, arp.IP)
+		} else if dhcp, ok := dhcpMap[mac]; ok {
+			wc.IP = dhcp.IP
+			log.Printf("WiFi 客户端 %s 从 DHCP 租约获取 IP: %s", mac, dhcp.IP)
 		} else {
-			log.Printf("WiFi 客户端 %s 未匹配到 ARP 条目", mac)
+			log.Printf("WiFi 客户端 %s 未找到 IP 地址", mac)
 		}
-		if name, ok := nameMap[mac]; ok {
-			wc.Name = name
+
+		// 从 DHCP 租约获取主机名
+		if dhcp, ok := dhcpMap[mac]; ok && dhcp.Name != "" {
+			wc.Name = dhcp.Name
 		}
 		if wc.Name == "" {
 			wc.Name = wc.IP
@@ -106,10 +112,12 @@ func (c *ClientCollector) collect() {
 		client := ClientInfo{
 			MAC:       mac,
 			IP:        arp.IP,
-			Name:      nameMap[mac],
 			ConnType:  "wired",
 			Online:    true,
 			Interface: arp.Device,
+		}
+		if dhcp, ok := dhcpMap[mac]; ok && dhcp.Name != "" {
+			client.Name = dhcp.Name
 		}
 		if client.Name == "" {
 			client.Name = client.IP
@@ -357,8 +365,12 @@ func collectARPMap() map[string]arpEntry {
 
 	data, err := os.ReadFile("/proc/net/arp")
 	if err != nil {
+		log.Printf("读取 /proc/net/arp 失败: %v", err)
 		return result
 	}
+
+	// 调试日志：打印原始文件内容
+	log.Printf("ARP 文件原始内容 (%d 字节): %s", len(data), string(data))
 
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	lineNum := 0
@@ -367,8 +379,10 @@ func collectARPMap() map[string]arpEntry {
 		if lineNum == 1 {
 			continue
 		}
-		fields := strings.Fields(scanner.Text())
+		line := scanner.Text()
+		fields := strings.Fields(line)
 		if len(fields) < 6 {
+			log.Printf("ARP 行字段不足 6 个: %q (字段数: %d)", line, len(fields))
 			continue
 		}
 
@@ -378,9 +392,11 @@ func collectARPMap() map[string]arpEntry {
 		device := fields[5]
 
 		if hwType != "0x1" {
+			log.Printf("ARP 跳过非以太网类型: %s (hwType: %s)", mac, hwType)
 			continue
 		}
 		if !isValidMAC(mac) {
+			log.Printf("ARP 跳过无效 MAC: %s", mac)
 			continue
 		}
 		if mac == "00:00:00:00:00:00" {
@@ -393,14 +409,21 @@ func collectARPMap() map[string]arpEntry {
 		}
 	}
 
+	log.Printf("ARP 表最终解析到 %d 条记录", len(result))
 	return result
 }
 
-func collectDHCPNames() map[string]string {
-	result := make(map[string]string)
+type dhcpEntry struct {
+	IP   string
+	Name string
+}
+
+func collectDHCPMap() map[string]dhcpEntry {
+	result := make(map[string]dhcpEntry)
 
 	data, err := os.ReadFile("/tmp/dhcp.leases")
 	if err != nil {
+		log.Printf("读取 /tmp/dhcp.leases 失败: %v", err)
 		return result
 	}
 
@@ -409,13 +432,17 @@ func collectDHCPNames() map[string]string {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) >= 4 {
 			mac := normalizeMAC(fields[1])
+			ip := fields[2]
 			name := fields[3]
+			entry := dhcpEntry{IP: ip}
 			if name != "*" && name != "" {
-				result[mac] = name
+				entry.Name = name
 			}
+			result[mac] = entry
 		}
 	}
 
+	log.Printf("DHCP 租约文件解析到 %d 条记录", len(result))
 	return result
 }
 
