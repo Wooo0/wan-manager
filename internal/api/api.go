@@ -31,10 +31,32 @@ func NewAPIHandler(wc *collector.WANCollector, cc *collector.ClientCollector) *A
 
 // RegisterRoutes 注册路由
 func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/", h.handleRoot)
 	mux.HandleFunc("/api/v1/summary", h.handleSummary)
 	mux.HandleFunc("/api/v1/wan", h.handleWAN)
 	mux.HandleFunc("/api/v1/clients", h.handleClients)
 	mux.HandleFunc("/api/v1/health", h.handleHealth)
+}
+
+// handleRoot 根路径返回服务信息（避免浏览器访问 404）
+func (h *APIHandler) handleRoot(w http.ResponseWriter, r *http.Request) {
+	// 只处理精确匹配的根路径，其他未匹配路径返回 404
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"name":    "wan-manager",
+		"version": "running",
+		"endpoints": []string{
+			"/api/v1/health",
+			"/api/v1/summary",
+			"/api/v1/wan",
+			"/api/v1/clients",
+		},
+	})
 }
 
 func (h *APIHandler) handleSummary(w http.ResponseWriter, r *http.Request) {
