@@ -637,12 +637,17 @@ update_service() {
     cp wan-manager "$BINARY"
 
     echo -e "  正在更新管理脚本..."
-    download_file "${GITHUB_RAW}/scripts/wan-manager.sh" "${INSTALL_DIR}/wan-manager.sh"
-    chmod +x "${INSTALL_DIR}/wan-manager.sh"
-    # 保持当前安装路径不变（避免新脚本重置为默认路径 /usr/bin）
-    sed -i "s|INSTALL_DIR=\"/usr/bin\"|INSTALL_DIR=\"${INSTALL_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh" 2>/dev/null
-    sed -i "s|CONFIG_DIR=\"/etc/wan-manager\"|CONFIG_DIR=\"${CONFIG_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh" 2>/dev/null
-    sed -i "s|INIT_SCRIPT=\"/etc/init.d/S99wan-manager\"|INIT_SCRIPT=\"${INIT_SCRIPT}\"|g" "${INSTALL_DIR}/wan-manager.sh" 2>/dev/null
+    # 下载到临时文件，避免覆盖正在执行的自身脚本导致 shell 读取错位
+    download_file "${GITHUB_RAW}/scripts/wan-manager.sh" "${INSTALL_DIR}/wan-manager.sh.new"
+    if [ -f "${INSTALL_DIR}/wan-manager.sh.new" ]; then
+        # 保持当前安装路径不变（避免新脚本重置为默认路径 /usr/bin）
+        sed -i "s|INSTALL_DIR=\"/usr/bin\"|INSTALL_DIR=\"${INSTALL_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh.new" 2>/dev/null
+        sed -i "s|CONFIG_DIR=\"/etc/wan-manager\"|CONFIG_DIR=\"${CONFIG_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh.new" 2>/dev/null
+        sed -i "s|INIT_SCRIPT=\"/etc/init.d/S99wan-manager\"|INIT_SCRIPT=\"${INIT_SCRIPT}\"|g" "${INSTALL_DIR}/wan-manager.sh.new" 2>/dev/null
+        chmod +x "${INSTALL_DIR}/wan-manager.sh.new"
+        # mv 原子替换，不影响当前正在运行的脚本
+        mv -f "${INSTALL_DIR}/wan-manager.sh.new" "${INSTALL_DIR}/wan-manager.sh"
+    fi
     # 同步更新启动脚本路径（如果存在）
     if [ -f "$INIT_SCRIPT" ]; then
         sed -i "s|/usr/bin/wan-manager|${BINARY}|g" "$INIT_SCRIPT" 2>/dev/null
