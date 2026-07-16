@@ -2,6 +2,7 @@ package collector
 
 import (
 	"bufio"
+	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -63,6 +64,10 @@ func (c *ClientCollector) collect() {
 	arpMap := collectARPMap()
 	nameMap := collectDHCPNames()
 
+	// 调试日志：打印采集到的数据量
+	log.Printf("采集到 %d 个 WiFi 客户端，ARP 表 %d 条，DHCP 租约 %d 条",
+		len(wifiClients), len(arpMap), len(nameMap))
+
 	seen := make(map[string]bool)
 	var result []ClientInfo
 
@@ -75,6 +80,9 @@ func (c *ClientCollector) collect() {
 
 		if arp, ok := arpMap[mac]; ok {
 			wc.IP = arp.IP
+			log.Printf("WiFi 客户端 %s 匹配到 ARP 条目，IP: %s", mac, arp.IP)
+		} else {
+			log.Printf("WiFi 客户端 %s 未匹配到 ARP 条目", mac)
 		}
 		if name, ok := nameMap[mac]; ok {
 			wc.Name = name
@@ -273,12 +281,16 @@ func getIwinfoAssoclist(iface string) map[string]int {
 	scanner := bufio.NewScanner(strings.NewReader(string(out)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.Contains(line, "MAC") || strings.Contains(line, "---") {
+		// 跳过表头、分隔线和元数据行
+		if line == "" || strings.Contains(line, "MAC") || strings.Contains(line, "---") ||
+			strings.Contains(line, "ifname") || strings.Contains(line, "ssid:") ||
+			strings.Contains(line, "bssid") || strings.Contains(line, "channel") ||
+			strings.Contains(line, "noise") || strings.Contains(line, "stacount") {
 			continue
 		}
 
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		if len(fields) < 4 {
 			continue
 		}
 
@@ -287,17 +299,11 @@ func getIwinfoAssoclist(iface string) map[string]int {
 			continue
 		}
 
+		// iwinfo assoclist 输出格式：MAC PHY SECU RSSI NOISE SNR ...
+		// fields[3] 是 RSSI（信号强度，如 "-55"）
 		signal := 0
-		for _, f := range fields {
-			if strings.HasSuffix(f, "dBm") || strings.HasSuffix(f, "dB") {
-				numStr := strings.TrimSuffix(f, "dBm")
-				numStr = strings.TrimSuffix(numStr, "dB")
-				numStr = strings.TrimSpace(numStr)
-				if n, err := parseInt(numStr); err == nil {
-					signal = n
-					break
-				}
-			}
+		if n, err := parseInt(fields[3]); err == nil {
+			signal = n
 		}
 
 		result[mac] = signal
