@@ -297,6 +297,8 @@ if download_file "${GITHUB_RAW}/deploy/S99wan-manager" "${INIT_DIR}/S99wan-manag
     # 替换启动脚本中的默认路径
     sed -i "s|/usr/bin/wan-manager|${INSTALL_DIR}/${BINARY_NAME}|g" "${INIT_DIR}/S99wan-manager" 2>/dev/null
     sed -i "s|/etc/wan-manager/config.toml|${CONFIG_DIR}/config.toml|g" "${INIT_DIR}/S99wan-manager" 2>/dev/null
+    sed -i "s|/var/run/wan-manager.pid|${INSTALL_DIR}/wan-manager.pid|g" "${INIT_DIR}/S99wan-manager" 2>/dev/null
+    sed -i "s|/var/log/wan-manager.log|${INSTALL_DIR}/wan-manager.log|g" "${INIT_DIR}/S99wan-manager" 2>/dev/null
     echo -e "  ${GREEN}✓${NC} 启动脚本: ${INIT_DIR}/S99wan-manager"
 
     # 设置开机自启

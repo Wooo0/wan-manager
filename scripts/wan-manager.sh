@@ -27,6 +27,9 @@ if [ "$_script_dir" != "/usr/bin" ] && [ -n "$_script_dir" ]; then
         CONFIG_DIR="${INSTALL_DIR}/etc"
     fi
     CONFIG_FILE="${CONFIG_DIR}/config.toml"
+    # 日志和 PID 文件也放安装目录，避免 /var/log 和 /var/run 在重启后清空
+    LOG_FILE="${INSTALL_DIR}/wan-manager.log"
+    PID_FILE="${INSTALL_DIR}/wan-manager.pid"
 fi
 
 GITHUB_REPO="Wooo0/wan-manager"
@@ -640,6 +643,13 @@ update_service() {
     sed -i "s|INSTALL_DIR=\"/usr/bin\"|INSTALL_DIR=\"${INSTALL_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh" 2>/dev/null
     sed -i "s|CONFIG_DIR=\"/etc/wan-manager\"|CONFIG_DIR=\"${CONFIG_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh" 2>/dev/null
     sed -i "s|INIT_SCRIPT=\"/etc/init.d/S99wan-manager\"|INIT_SCRIPT=\"${INIT_SCRIPT}\"|g" "${INSTALL_DIR}/wan-manager.sh" 2>/dev/null
+    # 同步更新启动脚本路径（如果存在）
+    if [ -f "$INIT_SCRIPT" ]; then
+        sed -i "s|/usr/bin/wan-manager|${BINARY}|g" "$INIT_SCRIPT" 2>/dev/null
+        sed -i "s|/etc/wan-manager/config.toml|${CONFIG_FILE}|g" "$INIT_SCRIPT" 2>/dev/null
+        sed -i "s|/var/run/wan-manager.pid|${PID_FILE}|g" "$INIT_SCRIPT" 2>/dev/null
+        sed -i "s|/var/log/wan-manager.log|${LOG_FILE}|g" "$INIT_SCRIPT" 2>/dev/null
+    fi
 
     if [ ! -f "$CONFIG_FILE" ]; then
         mkdir -p "$CONFIG_DIR"
