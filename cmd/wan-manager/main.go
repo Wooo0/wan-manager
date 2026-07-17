@@ -7,17 +7,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/Wooo0/wan-manager/internal/api"
 	"github.com/Wooo0/wan-manager/internal/collector"
 	"github.com/Wooo0/wan-manager/internal/config"
+	"github.com/Wooo0/wan-manager/internal/routing"
 )
 
 var version = "dev"
 
 func main() {
 	configPath := flag.String("config", "/etc/wan-manager/config.toml", "配置文件路径")
+	routingConfigPath := flag.String("routing-config", "", "策略路由配置文件路径（默认与主配置同目录的 routing.toml）")
 	showVersion := flag.Bool("version", false, "显示版本")
 	flag.Parse()
 
@@ -48,14 +51,39 @@ func main() {
 		log.Printf("  - %s (%s): %s", w.Name, w.Label, w.Interface)
 	}
 
+	// 加载策略路由配置
+	if *routingConfigPath == "" {
+		// 默认与主配置同目录
+		*routingConfigPath = filepath.Join(filepath.Dir(*configPath), "routing.toml")
+	}
+	routingCfg, err := routing.LoadRoutingConfig(*routingConfigPath)
+	if err != nil {
+		log.Printf("加载路由配置失败: %v, 使用默认配置", err)
+		routingCfg = routing.DefaultRoutingConfig()
+	}
+	log.Printf("策略路由: enabled=%v, default_wan=%s, rules=%d", routingCfg.Enabled, routingCfg.DefaultWAN, len(routingCfg.Rules))
+
+	// 初始化采集器
 	wanCollector := collector.NewWANCollector(cfg.WAN, cfg.Collector.Interval)
 	wanCollector.Start()
 
 	clientCollector := collector.NewClientCollector(cfg.Collector.Interval)
 	clientCollector.Start()
 
+	// 初始化策略路由管理器
+	wanNames := make([]string, len(cfg.WAN))
+	for i, w := range cfg.WAN {
+		wanNames[i] = w.Name
+	}
+	routingManager := routing.NewManager(routingCfg, wanNames)
+	if routingCfg.Enabled {
+		if err := routingManager.Start(); err != nil {
+			log.Printf("启动策略路由失败: %v", err)
+		}
+	}
+
 	mux := http.NewServeMux()
-	apiHandler := api.NewAPIHandler(wanCollector, clientCollector)
+	apiHandler := api.NewAPIHandler(wanCollector, clientCollector, routingManager)
 	apiHandler.RegisterRoutes(mux)
 
 	server := &http.Server{
@@ -75,5 +103,11 @@ func main() {
 	<-sigChan
 
 	log.Println("收到退出信号，正在关闭...")
+
+	// 停止策略路由
+	if routingCfg.Enabled {
+		routingManager.Stop()
+	}
+
 	log.Println("服务已停止")
 }

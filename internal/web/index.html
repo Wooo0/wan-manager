@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WAN Manager - 智能分流管理</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        
+        /* 头部 */
+        .header {
+            background: rgba(255,255,255,0.95);
+            border-radius: 16px;
+            padding: 24px 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .header h1 {
+            font-size: 24px;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .header .logo {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .status-badge {
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .status-online { background: #d4edda; color: #155724; }
+        .status-offline { background: #f8d7da; color: #721c24; }
+        
+        /* 标签页 */
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+        .tab {
+            padding: 12px 24px;
+            background: rgba(255,255,255,0.7);
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 15px;
+            color: #555;
+            transition: all 0.2s;
+        }
+        .tab:hover { background: rgba(255,255,255,0.9); }
+        .tab.active {
+            background: white;
+            color: #667eea;
+            font-weight: 600;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        /* 卡片 */
+        .card {
+            background: rgba(255,255,255,0.95);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        }
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .card-title::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 2px;
+        }
+        
+        /* WAN 状态网格 */
+        .wan-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .wan-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+            border-radius: 12px;
+            padding: 20px;
+            border-left: 4px solid #667eea;
+        }
+        .wan-card.disconnected { border-left-color: #dc3545; opacity: 0.7; }
+        .wan-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .wan-name { font-size: 16px; font-weight: 600; color: #333; }
+        .wan-status {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .wan-status.online { background: #28a745; color: white; }
+        .wan-status.offline { background: #dc3545; color: white; }
+        .wan-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .stat-item {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        .stat-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }
+        .stat-value.download { color: #28a745; }
+        .stat-value.upload { color: #007bff; }
+        
+        /* 客户端表格 */
+        .client-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .client-table th,
+        .client-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        .client-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+            font-size: 13px;
+        }
+        .client-table tr:hover { background: #f8f9fa; }
+        .client-name { font-weight: 500; color: #333; }
+        .client-mac { font-family: monospace; color: #666; font-size: 13px; }
+        .band-badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+        .band-5g { background: #e7f3ff; color: #0066cc; }
+        .band-24g { background: #fff3e0; color: #e65100; }
+        .signal-bar {
+            display: inline-block;
+            width: 60px;
+            height: 6px;
+            background: #eee;
+            border-radius: 3px;
+            overflow: hidden;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        .signal-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+        .signal-good { background: #28a745; }
+        .signal-medium { background: #ffc107; }
+        .signal-poor { background: #dc3545; }
+        
+        /* 路由规则 */
+        .routing-status {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .routing-toggle {
+            position: relative;
+            width: 50px;
+            height: 26px;
+            background: #ccc;
+            border-radius: 13px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .routing-toggle.active { background: #28a745; }
+        .routing-toggle::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+        .routing-toggle.active::after { transform: translateX(24px); }
+        .rule-list { list-style: none; }
+        .rule-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 12px;
+        }
+        .rule-info { flex: 1; }
+        .rule-name { font-weight: 600; color: #333; margin-bottom: 4px; }
+        .rule-detail { font-size: 13px; color: #666; }
+        .rule-wan {
+            padding: 4px 12px;
+            background: #667eea;
+            color: white;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+        
+        /* 页面切换 */
+        .page { display: none; }
+        .page.active { display: block; }
+        
+        /* 加载状态 */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s infinite;
+        }
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+        
+        /* 响应式 */
+        @media (max-width: 768px) {
+            body { padding: 12px; }
+            .header { padding: 16px 20px; flex-direction: column; gap: 12px; }
+            .header h1 { font-size: 20px; }
+            .tabs { flex-wrap: wrap; }
+            .tab { flex: 1; min-width: 100px; text-align: center; }
+            .wan-grid { grid-template-columns: 1fr; }
+            .client-table { font-size: 13px; }
+            .client-table th,
+            .client-table td { padding: 8px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <div class="header">
+            <h1>
+                <span class="logo">W</span>
+                WAN Manager
+            </h1>
+            <span id="headerStatus" class="status-badge status-online">运行中</span>
+        </div>
+        
+        <!-- 标签页 -->
+        <div class="tabs">
+            <button class="tab active" onclick="showPage('dashboard')">状态概览</button>
+            <button class="tab" onclick="showPage('clients')">客户端</button>
+            <button class="tab" onclick="showPage('routing')">分流规则</button>
+        </div>
+        
+        <!-- 状态概览页 -->
+        <div id="dashboard" class="page active">
+            <div class="card">
+                <div class="card-title">WAN 口状态</div>
+                <div id="wanGrid" class="wan-grid">
+                    <div class="loading">加载中</div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-title">系统信息</div>
+                <div class="wan-stats">
+                    <div class="stat-item">
+                        <div class="stat-label">在线客户端</div>
+                        <div class="stat-value" id="clientCount">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">策略路由</div>
+                        <div class="stat-value" id="routingStatus">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">总下载速率</div>
+                        <div class="stat-value download" id="totalRx">-</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">总上传速率</div>
+                        <div class="stat-value upload" id="totalTx">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 客户端页 -->
+        <div id="clients" class="page">
+            <div class="card">
+                <div class="card-title">在线客户端</div>
+                <table class="client-table">
+                    <thead>
+                        <tr>
+                            <th>设备名称</th>
+                            <th>IP 地址</th>
+                            <th>MAC 地址</th>
+                            <th>频段</th>
+                            <th>信号</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clientTable">
+                        <tr><td colspan="5" class="loading">加载中</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- 分流规则页 -->
+        <div id="routing" class="page">
+            <div class="card">
+                <div class="card-title">策略路由</div>
+                <div class="routing-status">
+                    <div id="routingToggle" class="routing-toggle" onclick="toggleRouting()"></div>
+                    <span id="routingLabel">策略路由已关闭</span>
+                </div>
+                <div id="ruleList" class="rule-list">
+                    <div class="loading">加载中</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 格式化速率
+        function formatSpeed(bytesPerSec) {
+            if (bytesPerSec < 1024) return bytesPerSec.toFixed(0) + ' B/s';
+            if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
+            return (bytesPerSec / 1024 / 1024).toFixed(2) + ' MB/s';
+        }
+        
+        // 格式化流量
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+            return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+        }
+        
+        // 信号强度转百分比
+        function signalToPercent(signal) {
+            if (signal >= -50) return 100;
+            if (signal <= -90) return 0;
+            return 2 * (signal + 90);
+        }
+        
+        // 信号强度样式
+        function signalClass(signal) {
+            if (signal >= -60) return 'signal-good';
+            if (signal >= -75) return 'signal-medium';
+            return 'signal-poor';
+        }
+        
+        // 显示页面
+        function showPage(pageId) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById(pageId).classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+        // 加载 WAN 状态
+        async function loadWANStatus() {
+            try {
+                const res = await fetch('/api/v1/wan');
+                const data = await res.json();
+                
+                const grid = document.getElementById('wanGrid');
+                let totalRx = 0, totalTx = 0;
+                
+                grid.innerHTML = data.map(wan => {
+                    totalRx += wan.rx_speed || 0;
+                    totalTx += wan.tx_speed || 0;
+                    
+                    return `
+                        <div class="wan-card ${wan.connected ? '' : 'disconnected'}">
+                            <div class="wan-header">
+                                <span class="wan-name">${wan.label || wan.name}</span>
+                                <span class="wan-status ${wan.connected ? 'online' : 'offline'}">
+                                    ${wan.connected ? '在线' : '离线'}
+                                </span>
+                            </div>
+                            <div class="wan-stats">
+                                <div class="stat-item">
+                                    <div class="stat-label">下载速率</div>
+                                    <div class="stat-value download">${formatSpeed(wan.rx_speed || 0)}</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-label">上传速率</div>
+                                    <div class="stat-value upload">${formatSpeed(wan.tx_speed || 0)}</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-label">累计下载</div>
+                                    <div class="stat-value">${formatBytes(wan.rx_bytes || 0)}</div>
+                                </div>
+                                <div class="stat-item">
+                                    <div class="stat-label">累计上传</div>
+                                    <div class="stat-value">${formatBytes(wan.tx_bytes || 0)}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                document.getElementById('totalRx').textContent = formatSpeed(totalRx);
+                document.getElementById('totalTx').textContent = formatSpeed(totalTx);
+            } catch (e) {
+                console.error('加载 WAN 状态失败:', e);
+            }
+        }
+        
+        // 加载客户端列表
+        async function loadClients() {
+            try {
+                const res = await fetch('/api/v1/clients');
+                const data = await res.json();
+                
+                document.getElementById('clientCount').textContent = data.length + ' 台';
+                
+                const tbody = document.getElementById('clientTable');
+                if (data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px;color:#666;">暂无在线客户端</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.map(client => {
+                    const signal = client.signal || 0;
+                    const percent = signalToPercent(signal);
+                    const sClass = signalClass(signal);
+                    const bandClass = client.band === '5G' ? 'band-5g' : 'band-24g';
+                    
+                    return `
+                        <tr>
+                            <td class="client-name">${client.name || '-'}</td>
+                            <td>${client.ip || '-'}</td>
+                            <td class="client-mac">${client.mac || '-'}</td>
+                            <td><span class="band-badge ${bandClass}">${client.band || '-'}</span></td>
+                            <td>
+                                <span class="signal-bar"><span class="signal-fill ${sClass}" style="width:${percent}%"></span></span>
+                                ${signal} dBm
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error('加载客户端失败:', e);
+            }
+        }
+        
+        // 加载路由状态
+        async function loadRouting() {
+            try {
+                const res = await fetch('/api/v1/routing');
+                const data = await res.json();
+                
+                const toggle = document.getElementById('routingToggle');
+                const label = document.getElementById('routingLabel');
+                
+                if (data.enabled && data.active) {
+                    toggle.classList.add('active');
+                    label.textContent = '策略路由已启用';
+                } else {
+                    toggle.classList.remove('active');
+                    label.textContent = '策略路由已关闭';
+                }
+                
+                document.getElementById('routingStatus').textContent = data.enabled ? '已启用' : '未启用';
+                
+                const ruleList = document.getElementById('ruleList');
+                const rules = data.config?.rules || [];
+                
+                if (rules.length === 0) {
+                    ruleList.innerHTML = '<div style="text-align:center;padding:40px;color:#666;">暂无分流规则</div>';
+                    return;
+                }
+                
+                ruleList.innerHTML = rules.map(rule => `
+                    <div class="rule-item">
+                        <div class="rule-info">
+                            <div class="rule-name">${rule.name}</div>
+                            <div class="rule-detail">
+                                类型: ${rule.type} | IP 数量: ${rule.ips?.length || 0} | 
+                                状态: ${rule.enabled ? '已启用' : '已禁用'}
+                            </div>
+                        </div>
+                        <span class="rule-wan">${rule.wan}</span>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('加载路由状态失败:', e);
+            }
+        }
+        
+        // 切换路由（占位）
+        function toggleRouting() {
+            alert('路由开关功能待实现，请编辑 routing.toml 配置文件');
+        }
+        
+        // 初始化
+        async function init() {
+            await Promise.all([loadWANStatus(), loadClients(), loadRouting()]);
+        }
+        
+        // 定时刷新
+        setInterval(async () => {
+            await loadWANStatus();
+            await loadClients();
+        }, 3000);
+        
+        // 启动
+        init();
+    </script>
+</body>
+</html>

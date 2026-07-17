@@ -1,0 +1,49 @@
+# 策略路由配置文件
+# 三级优先级：应用分流 > 运营商分流 > 默认规则
+
+# 是否启用策略路由
+enabled = false
+
+# 默认 WAN 口（未匹配流量走这个）
+default_wan = "wan1"
+
+# 运营商 IP 库（第二优先级）
+[isp]
+# 电信 IP 段
+telecom = [
+    # "1.0.1.0/24",
+    # "1.0.2.0/23",
+]
+
+# 联通 IP 段
+unicom = [
+    # "1.0.8.0/21",
+    # "1.0.32.0/19",
+]
+
+# 移动 IP 段
+mobile = [
+    # "1.0.64.0/18",
+]
+
+# 自定义分流规则（第一优先级，未来 nDPI 应用分流也用这个）
+[[rules]]
+name = "游戏分流"
+enabled = false
+wan = "wan1"
+# 规则类型：custom（手动 IP）、isp（运营商）、app（应用识别，待实现）
+type = "custom"
+# IP 列表或 CIDR
+ips = [
+    # "1.2.3.4/32",
+    # "5.6.7.0/24",
+]
+
+[[rules]]
+name = "视频分流"
+enabled = false
+wan = "wan2"
+type = "custom"
+ips = [
+    # "10.0.0.0/8",
+]
