@@ -273,6 +273,49 @@
             height: 20px;
             border-radius: 4px;
         }
+
+        .isp-segments {
+            margin: 12px 0 4px;
+            padding: 12px;
+            background: var(--bg);
+            border-radius: 8px;
+        }
+        .isp-seg-title {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+        .isp-seg-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+        }
+        .isp-seg-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            padding: 8px 4px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+        }
+        .isp-seg-name { font-size: 12px; color: var(--text-muted); }
+        .isp-seg-count { font-size: 18px; font-weight: 700; color: var(--text); }
+        .isp-seg-src {
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 8px;
+        }
+        .isp-seg-src.remote { background: rgba(76,175,80,0.18);  color: #66bb6a; }
+        .isp-seg-src.local  { background: rgba(33,150,243,0.18); color: #42a5f5; }
+        .isp-seg-src.empty  { background: rgba(244,67,54,0.18);  color: #ef5350; }
+
+        .git-update-btn {
+            margin-top: 8px;
+            font-size: 12px;
+            padding: 4px 10px;
+        }
         
         .status-badge {
             padding: 4px 10px;
@@ -1280,6 +1323,27 @@
                         </select>
                     </div>
                 </div>
+
+                <div id="ispSegments" class="isp-segments" style="display:none;">
+                    <div class="isp-seg-title">运营商 IP 段（已加载，供分流匹配）</div>
+                    <div class="isp-seg-grid">
+                        <div class="isp-seg-item">
+                            <span class="isp-seg-name">电信</span>
+                            <span class="isp-seg-count" id="ispTelecomCount">0</span>
+                            <span class="isp-seg-src" id="ispTelecomSrc"></span>
+                        </div>
+                        <div class="isp-seg-item">
+                            <span class="isp-seg-name">联通</span>
+                            <span class="isp-seg-count" id="ispUnicomCount">0</span>
+                            <span class="isp-seg-src" id="ispUnicomSrc"></span>
+                        </div>
+                        <div class="isp-seg-item">
+                            <span class="isp-seg-name">移动</span>
+                            <span class="isp-seg-count" id="ispMobileCount">0</span>
+                            <span class="isp-seg-src" id="ispMobileSrc"></span>
+                        </div>
+                    </div>
+                </div>
                 
                 <div class="sub-tabs">
                     <button class="sub-tab active" onclick="switchSubTab('ip')" data-tab="ip">
@@ -1396,8 +1460,12 @@
                     <select class="form-select" id="ruleGame">
                         <option value="">加载中...</option>
                     </select>
+                    <button type="button" class="btn btn-secondary git-update-btn" id="gitUpdateBtn" onclick="updateGameLibraryFromGit()">
+                        从 Git 更新游戏规则库
+                    </button>
                     <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
                         将 <code>rules/game/</code> 目录下的 .rules 文件分配给出口 WAN（库详情见各文件头部）。
+                        点「从 Git 更新」可一键从 <code>FQrabbit/SSTap-Rule</code> 拉取社区最新游戏 IP 库覆盖本机。
                     </div>
                 </div>
                 <div class="form-group">
@@ -1947,6 +2015,9 @@
                     if (wan1NameEl) wan1NameEl.textContent = data.balance_ratio.wan1_name || 'WAN1';
                     if (wan2NameEl) wan2NameEl.textContent = data.balance_ratio.wan2_name || 'WAN2';
                 }
+
+                // 运营商 IP 段可视化
+                renderISPSegments(data.isp_segments);
                 
                 const mwan3Rules = data.mwan3_rules || [];
                 const customRules = data.config?.rules || [];
@@ -2339,6 +2410,54 @@
                 if (selectValue) sel.value = selectValue;
             } catch (e) {
                 console.error('loadGameLibrary failed:', e);
+            }
+        }
+
+        // 运营商 IP 段可视化：三网各自加载的段数与来源（远程/本地/空）。
+        function renderISPSegments(segs) {
+            const box = document.getElementById('ispSegments');
+            if (!box) return;
+            if (!segs) { box.style.display = 'none'; return; }
+            const map = {
+                'telecom': { count: 'ispTelecomCount', src: 'ispTelecomSrc' },
+                'unicom':  { count: 'ispUnicomCount',  src: 'ispUnicomSrc' },
+                'mobile':  { count: 'ispMobileCount',  src: 'ispMobileSrc' },
+            };
+            for (const [op, el] of Object.entries(map)) {
+                const info = segs[op] || { count: 0, source: '' };
+                const cnt = document.getElementById(el.count);
+                const src = document.getElementById(el.src);
+                if (cnt) cnt.textContent = info.count || 0;
+                if (src) {
+                    const s = info.source || '';
+                    src.textContent = s === 'remote' ? '远程' : s === 'local' ? '本地' : s === 'empty' ? '空' : '';
+                    src.className = 'isp-seg-src ' + (s || '');
+                }
+            }
+            box.style.display = 'block';
+        }
+
+        // 从 Git（FQrabbit/SSTap-Rule）一键拉取最新游戏规则库覆盖本机。
+        async function updateGameLibraryFromGit() {
+            const btn = document.getElementById('gitUpdateBtn');
+            if (!btn) return;
+            const original = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '更新中...';
+            try {
+                const res = await fetch('/api/v1/game-library/update', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) {
+                    showToast(data.message || '从 Git 更新失败', 'error');
+                } else {
+                    showToast(data.message || '已从 Git 更新游戏规则库', 'success');
+                    await loadGameLibrary(); // 刷新下拉，立即可见新游戏
+                }
+            } catch (e) {
+                showToast('从 Git 更新失败，请检查路由器网络', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = original;
             }
         }
 

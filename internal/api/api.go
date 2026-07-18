@@ -66,6 +66,7 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/dpi/flows", h.handleDPIFlows)
 	mux.HandleFunc("/api/v1/isp/logo", h.handleISPLogo)
 	mux.HandleFunc("/api/v1/game-library", h.handleGameLibrary)
+	mux.HandleFunc("/api/v1/game-library/update", h.handleGameLibraryUpdate)
 	mux.HandleFunc("/api/v1/events", h.handleEvents)
 }
 
@@ -229,6 +230,26 @@ func (h *APIHandler) handleGetRouting(w http.ResponseWriter, r *http.Request) {
 		result["active"] = h.routingManager.IsActive()
 		result["isp_enabled"] = cfgCopy.ISP.Enabled
 		result["isp_unmatched"] = cfgCopy.ISP.Unmatched
+
+		// 运营商 IP 段可视化：count 取已合并进配置的段数，source 取启动时记录的来源（remote/local/empty）
+		ispSegments := map[string]interface{}{}
+		for _, op := range []string{"telecom", "unicom", "mobile"} {
+			count := 0
+			switch op {
+			case "telecom":
+				count = len(cfgCopy.ISP.Telecom)
+			case "unicom":
+				count = len(cfgCopy.ISP.Unicom)
+			case "mobile":
+				count = len(cfgCopy.ISP.Mobile)
+			}
+			ispSegments[op] = map[string]interface{}{
+				"count":  count,
+				"source": h.routingManager.GetISPDataSource(op),
+			}
+		}
+		result["isp_segments"] = ispSegments
+
 		if cfgCopy.MWAN3Config == nil && mwan3Config != nil {
 			cfgCopy.MWAN3Config = mwan3Config
 		}
@@ -576,6 +597,48 @@ func (h *APIHandler) handleGameLibrary(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"rules_dir": dir,
 		"games":     lib,
+	})
+}
+
+// handleGameLibraryUpdate 从 Git（FQrabbit/SSTap-Rule）拉取最新游戏规则库，
+// 覆盖写入当前游戏目录。供 Web 面板「从 Git 更新」按钮调用。
+func (h *APIHandler) handleGameLibraryUpdate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if h.routingManager == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": "路由管理器未初始化"})
+		return
+	}
+
+	dir := h.routingManager.GameRulesDir()
+	if dir == "" {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": "未配置游戏规则目录（game_rules_dir）"})
+		return
+	}
+
+	res, err := rules.UpdateFromGit(dir)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "从 Git 更新失败: " + err.Error(),
+		})
+		return
+	}
+
+	msg := fmt.Sprintf("已从 Git 更新 %d 个游戏规则（分支 %s）", res.Count, res.Branch)
+	if len(res.Errors) > 0 {
+		msg += fmt.Sprintf("，%d 个文件处理失败", len(res.Errors))
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": msg,
+		"result":  res,
 	})
 }
 

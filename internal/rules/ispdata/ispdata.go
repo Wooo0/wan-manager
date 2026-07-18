@@ -50,34 +50,55 @@ func remoteSources() map[string][]string {
 	}
 }
 
+// Source 表示运营商 IP 段的加载来源。
+type Source string
+
+const (
+	SourceRemote Source = "remote" // 远程最新（metowolf github）
+	SourceLocal  Source = "local"  // 本地快照（随程序分发）
+	SourceEmpty  Source = "empty"  // 远程与本地均不可用，未加载到任何段
+)
+
+// LoadResult 加载结果：既包含实际数据，也记录每个运营商的来源与错误，
+// 供 Web 面板展示「三网各加载多少条、来自远程还是本地快照」。
+type LoadResult struct {
+	Data    map[string][]string // 运营商 -> IP 段（用于合并进配置）
+	Sources map[string]Source    // 运营商 -> 来源（remote/local/empty）
+	Errors  []error             // 完全失败的运营商错误
+}
+
 // LoadDefaults 加载三网运营商 IP 段：
 // 优先远程最新数据，失败时回退到本地快照目录（随程序分发）。
-func LoadDefaults() (map[string][]string, []error) {
+func LoadDefaults() *LoadResult {
 	return Load(remoteSources(), DefaultLocalDir())
 }
 
 // Load 按给定远程源加载运营商 IP 段；任一运营商失败时回退到 localDir 下的 <op>.txt。
-// 任一运营商彻底不可用不影响其它运营商。
-func Load(sources map[string][]string, localDir string) (map[string][]string, []error) {
-	out := map[string][]string{}
-	var errs []error
+// 任一运营商彻底不可用不影响其它运营商，并在 Sources 中标记为 empty。
+func Load(sources map[string][]string, localDir string) *LoadResult {
+	res := &LoadResult{
+		Data:    map[string][]string{},
+		Sources: map[string]Source{},
+	}
 	for op, urls := range sources {
-		cidrs, err := loadOne(op, urls, localDir)
+		cidrs, src, err := loadOne(op, urls, localDir)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", op, err))
+			res.Errors = append(res.Errors, fmt.Errorf("%s: %w", op, err))
+			res.Sources[op] = SourceEmpty
 			continue
 		}
-		out[op] = cidrs
+		res.Data[op] = cidrs
+		res.Sources[op] = src
 	}
-	return out, errs
+	return res
 }
 
-func loadOne(op string, urls []string, localDir string) ([]string, error) {
+func loadOne(op string, urls []string, localDir string) ([]string, Source, error) {
 	for _, u := range urls {
 		cidrs, err := download(u)
 		if err == nil && len(cidrs) > 0 {
 			log.Printf("运营商 IP 段(%s): 远程加载 %d 条 (%s)", op, len(cidrs), u)
-			return cidrs, nil
+			return cidrs, SourceRemote, nil
 		}
 		if err != nil {
 			log.Printf("运营商 IP 段(%s) 远程获取失败，尝试下一个源: %v", op, err)
@@ -86,9 +107,9 @@ func loadOne(op string, urls []string, localDir string) ([]string, error) {
 	// 回退本地快照
 	if b, e := loadLocal(op, localDir); e == nil && len(b) > 0 {
 		log.Printf("运营商 IP 段(%s): 使用本地快照 %d 条 (%s)", op, len(b), localDir)
-		return b, nil
+		return b, SourceLocal, nil
 	}
-	return nil, fmt.Errorf("远程与本地快照均不可用")
+	return nil, SourceEmpty, fmt.Errorf("远程与本地快照均不可用")
 }
 
 func download(url string) ([]string, error) {

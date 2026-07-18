@@ -13,6 +13,7 @@ import (
 
 	"github.com/Wooo0/wan-manager/internal/dpi"
 	"github.com/Wooo0/wan-manager/internal/rules"
+	ispdata "github.com/Wooo0/wan-manager/internal/rules/ispdata"
 )
 
 // cmdTimeout 外部命令（ipset/iptables/ip 等）的执行超时，防止工具卡死挂住管理器。
@@ -22,7 +23,12 @@ const cmdTimeout = 10 * time.Second
 func (m *Manager) runCmd(name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
-	return exec.CommandContext(ctx, name, args...).Run()
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %v 失败: %w (输出: %s)", name, args, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // 运营商内部键（与 ispdata / 配置 wan_mapping 保持一致）
@@ -40,8 +46,9 @@ type Manager struct {
 	active       bool
 	detector     dpi.Detector
 	appSets      map[string]string // app名称 -> ipset名称（动态维护）
-	ispWAN       map[string]string // 运营商(telecom/unicom/mobile) -> WAN 名称，启动时识别一次
-	gameRulesDir string            // 游戏 .rules 目录（已解析为绝对路径）
+	ispWAN       map[string]string        // 运营商(telecom/unicom/mobile) -> WAN 名称，启动时识别一次
+	ispDataSource map[string]ispdata.Source // 运营商(telecom/unicom/mobile) -> 来源(remote/local/empty)
+	gameRulesDir string                   // 游戏 .rules 目录（已解析为绝对路径）
 }
 
 // NewManager 创建策略路由管理器
@@ -73,6 +80,21 @@ func (m *Manager) SetISPOperatorMap(mapping map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ispWAN = mapping
+}
+
+// SetISPDataSource 设置各运营商 IP 段的来源（remote/local/empty），
+// 由 main 启动时从 ispdata.LoadResult.Sources 注入，供 API / Web 展示。
+func (m *Manager) SetISPDataSource(sources map[string]ispdata.Source) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ispDataSource = sources
+}
+
+// GetISPDataSource 返回某运营商的 IP 段来源（remote/local/empty）；未知返回空串。
+func (m *Manager) GetISPDataSource(op string) ispdata.Source {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.ispDataSource[op]
 }
 
 // SetGameRulesDir 设置游戏 .rules 目录（由 main 解析为绝对路径后传入）。
@@ -262,18 +284,18 @@ func (m *Manager) gameIPSetName(rule Rule) string {
 // createIPSets 创建 ipset 集合
 func (m *Manager) createIPSets() error {
 	// 为每个 WAN 口创建 ipset
+	// 用 -exist：若集合已存在（上一轮残留/重启未清理）则复用而非报错。
 	for wan := range m.wanTable {
 		setName := fmt.Sprintf("wan_%s", wan)
-		// 先删除（忽略错误）
-		m.runCmd("ipset", "destroy", setName)
-		// 创建 hash:net 类型
-		if err := m.runCmd("ipset", "create", setName, "hash:net"); err != nil {
+		if err := m.runCmd("ipset", "create", setName, "hash:net", "-exist"); err != nil {
 			return fmt.Errorf("创建 ipset %s 失败: %w", setName, err)
 		}
 		log.Printf("创建 ipset: %s", setName)
 	}
 
 	// 为运营商 IP 创建 ipset
+	// 同样用 -exist 复用已存在集合，并用 flush 清空旧条目后重新灌入，
+	// 避免上一轮“set already exists”导致整个切换失败。
 	ispSets := map[string][]string{
 		"isp_telecom": m.config.ISP.Telecom,
 		"isp_unicom":  m.config.ISP.Unicom,
@@ -281,13 +303,13 @@ func (m *Manager) createIPSets() error {
 	}
 
 	for name, ips := range ispSets {
-		m.runCmd("ipset", "destroy", name)
-		if err := m.runCmd("ipset", "create", name, "hash:net"); err != nil {
+		if err := m.runCmd("ipset", "create", name, "hash:net", "-exist"); err != nil {
 			return fmt.Errorf("创建 ipset %s 失败: %w", name, err)
 		}
+		m.runCmd("ipset", "flush", name)
 		// 添加 IP
 		for _, ip := range ips {
-			if err := m.runCmd("ipset", "add", name, ip); err != nil {
+			if err := m.runCmd("ipset", "add", name, ip, "-exist"); err != nil {
 				log.Printf("添加 IP %s 到 %s 失败: %v", ip, name, err)
 			}
 		}
@@ -302,10 +324,10 @@ func (m *Manager) createIPSets() error {
 		switch rule.Type {
 		case "app":
 			setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
-			m.runCmd("ipset", "destroy", setName)
-			if err := m.runCmd("ipset", "create", setName, "hash:net"); err != nil {
+			if err := m.runCmd("ipset", "create", setName, "hash:net", "-exist"); err != nil {
 				return fmt.Errorf("创建 ipset %s 失败: %w", setName, err)
 			}
+			m.runCmd("ipset", "flush", setName)
 			log.Printf("创建应用规则 ipset: %s (%d 个应用，动态填充)", setName, len(rule.Apps))
 		case "game":
 			key := rule.Game
@@ -313,29 +335,29 @@ func (m *Manager) createIPSets() error {
 				key = rule.Name
 			}
 			setName := "game_" + sanitizeName(key)
-			m.runCmd("ipset", "destroy", setName)
-			if err := m.runCmd("ipset", "create", setName, "hash:net"); err != nil {
+			if err := m.runCmd("ipset", "create", setName, "hash:net", "-exist"); err != nil {
 				return fmt.Errorf("创建游戏 ipset %s 失败: %w", setName, err)
 			}
+			m.runCmd("ipset", "flush", setName)
 			cidrs, err := m.readGameCIDRs(key)
 			if err != nil {
 				log.Printf("游戏 %s 读取规则失败: %v", key, err)
 				continue
 			}
 			for _, c := range cidrs {
-				if err := m.runCmd("ipset", "add", setName, c); err != nil {
+				if err := m.runCmd("ipset", "add", setName, c, "-exist"); err != nil {
 					log.Printf("添加 CIDR %s 到 %s 失败: %v", c, setName, err)
 				}
 			}
 			log.Printf("创建游戏 ipset: %s (%d 个 CIDR) -> %s", setName, len(cidrs), rule.WAN)
 		case "custom", "":
 			setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
-			m.runCmd("ipset", "destroy", setName)
-			if err := m.runCmd("ipset", "create", setName, "hash:ip"); err != nil {
+			if err := m.runCmd("ipset", "create", setName, "hash:ip", "-exist"); err != nil {
 				return fmt.Errorf("创建 ipset %s 失败: %w", setName, err)
 			}
+			m.runCmd("ipset", "flush", setName)
 			for _, ip := range rule.IPs {
-				if err := m.runCmd("ipset", "add", setName, ip); err != nil {
+				if err := m.runCmd("ipset", "add", setName, ip, "-exist"); err != nil {
 					log.Printf("添加 IP %s 到 %s 失败: %v", ip, setName, err)
 				}
 			}

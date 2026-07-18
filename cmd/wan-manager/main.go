@@ -84,11 +84,11 @@ func main() {
 	log.Printf("策略路由: enabled=%v, default_wan=%s, rules=%d", routingCfg.Enabled, routingCfg.DefaultWAN, len(routingCfg.Rules))
 
 	// 加载运营商 IP 段（远程最新优先，失败回退内置快照），合并到配置
-	ispData, ispErrs := ispdata.LoadDefaults()
-	for _, e := range ispErrs {
+	ispRes := ispdata.LoadDefaults()
+	for _, e := range ispRes.Errors {
 		log.Printf("运营商 IP 段加载警告: %v", e)
 	}
-	mergeISPData(routingCfg, ispData)
+	mergeISPData(routingCfg, ispRes.Data)
 	if routingCfg.ISP.Enabled {
 		log.Printf("运营商 IP 段: 电信 %d / 联通 %d / 移动 %d 条",
 			len(routingCfg.ISP.Telecom), len(routingCfg.ISP.Unicom), len(routingCfg.ISP.Mobile))
@@ -107,6 +107,8 @@ func main() {
 		wanNames[i] = w.Name
 	}
 	routingManager := routing.NewManager(routingCfg, wanNames)
+	// 记录各运营商 IP 段的来源（远程/本地快照），供 Web 面板展示
+	routingManager.SetISPDataSource(ispRes.Sources)
 
 	// 解析游戏 .rules 目录：配置留空则用默认 rules/game（相对二进制），
 	// 解析为绝对路径后交给管理器，避免相对工作目录的歧义。
