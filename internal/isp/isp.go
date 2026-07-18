@@ -49,43 +49,14 @@ func (d *Detector) Detect(iface string) *Info {
 	return info
 }
 
-// queryAll 并行查询多个国内服务
+// queryAll 查询 ipip.net（唯一可靠服务）
 func (d *Detector) queryAll(iface string) *Info {
-	type result struct {
-		info *Info
-		err  error
+	info, err := d.queryIPIP(iface)
+	if err == nil && info != nil {
+		return info
 	}
 
-	ch := make(chan result, 4)
-
-	go func() {
-		info, err := d.queryIPIP(iface)
-		ch <- result{info, err}
-	}()
-
-	go func() {
-		info, err := d.queryIPW(iface)
-		ch <- result{info, err}
-	}()
-
-	go func() {
-		info, err := d.queryIPCN(iface)
-		ch <- result{info, err}
-	}()
-
-	go func() {
-		info, err := d.queryIPAPI(iface)
-		ch <- result{info, err}
-	}()
-
-	for i := 0; i < 4; i++ {
-		r := <-ch
-		if r.err == nil && r.info != nil {
-			return r.info
-		}
-	}
-
-	log.Printf("所有 IP 查询服务均失败 (iface=%s)", iface)
+	log.Printf("IP 查询失败 (iface=%s): %v", iface, err)
 	return &Info{
 		ISP: "未知",
 		IP:  "未知",
@@ -101,103 +72,26 @@ func (d *Detector) queryIPIP(iface string) (*Info, error) {
 	}
 
 	var data struct {
-		Ret  string   `json:"ret"`
-		Data []string `json:"data"`
-	}
-	if err := json.Unmarshal(output, &data); err != nil {
-		return nil, err
-	}
-
-	if data.Ret != "ok" || len(data.Data) < 4 {
-		return nil, fmt.Errorf("ipip: invalid response")
-	}
-
-	return &Info{
-		IP:      data.Data[0],
-		Country: data.Data[1],
-		Region:  data.Data[2],
-		City:    data.Data[3],
-		ISP:     detectISP(data.Data[3]),
-	}, nil
-}
-
-// queryIPW 查询 ipw.cn（国内平台）
-func (d *Detector) queryIPW(iface string) (*Info, error) {
-	cmd := exec.Command("curl", "-s", "--connect-timeout", "5", "--interface", iface, "https://ipw.cn/api/ip/myip?json")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	var data struct {
-		IP  string `json:"ip"`
-		ISP string `json:"isp"`
-	}
-	if err := json.Unmarshal(output, &data); err != nil {
-		return nil, err
-	}
-
-	if data.IP == "" {
-		return nil, fmt.Errorf("ipw: empty ip")
-	}
-
-	return &Info{
-		IP:  data.IP,
-		ISP: detectISP(data.ISP),
-	}, nil
-}
-
-// queryIPCN 查询 ip.cn（国内平台）
-func (d *Detector) queryIPCN(iface string) (*Info, error) {
-	cmd := exec.Command("curl", "-s", "--connect-timeout", "5", "--interface", iface, "https://ip.cn/api/index?ip=&type=0")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	var data struct {
-		Code int    `json:"code"`
+		Ret  string `json:"ret"`
 		Data struct {
-			IP      string `json:"ip"`
-			Country string `json:"country"`
-			Region  string `json:"region"`
-			City    string `json:"city"`
-			Isp     string `json:"isp"`
+			IP       string   `json:"ip"`
+			Location []string `json:"location"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(output, &data); err != nil {
 		return nil, err
 	}
 
-	if data.Code != 0 || data.Data.IP == "" {
-		return nil, fmt.Errorf("ipcn: invalid response")
+	if data.Ret != "ok" || len(data.Data.Location) < 5 {
+		return nil, fmt.Errorf("ipip: invalid response")
 	}
 
 	return &Info{
 		IP:      data.Data.IP,
-		Country: data.Data.Country,
-		Region:  data.Data.Region,
-		City:    data.Data.City,
-		ISP:     detectISP(data.Data.Isp),
-	}, nil
-}
-
-// queryIPAPI 查询 api.ipify.org（返回IP，再结合其他方式）
-func (d *Detector) queryIPAPI(iface string) (*Info, error) {
-	cmd := exec.Command("curl", "-s", "--connect-timeout", "5", "--interface", iface, "https://api.ipify.org")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	ip := strings.TrimSpace(string(output))
-	if ip == "" {
-		return nil, fmt.Errorf("ipify: empty ip")
-	}
-
-	return &Info{
-		IP:  ip,
-		ISP: "未知",
+		Country: data.Data.Location[0],
+		Region:  data.Data.Location[1],
+		City:    data.Data.Location[2],
+		ISP:     detectISP(data.Data.Location[4]),
 	}, nil
 }
 

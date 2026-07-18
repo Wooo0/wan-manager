@@ -22,7 +22,6 @@ type LatencyResult struct {
 // WANStats WAN 口统计数据
 type WANStats struct {
 	Name      string          `json:"name"`
-	Label     string          `json:"label"`
 	Interface string          `json:"interface"`
 	RxBytes   uint64          `json:"rx_bytes"`
 	TxBytes   uint64          `json:"tx_bytes"`
@@ -103,7 +102,6 @@ func (w *WANCollector) collect() {
 	for _, wc := range w.wanConfigs {
 		s := WANStats{
 			Name:      wc.Name,
-			Label:     wc.Label,
 			Interface: wc.Interface,
 		}
 
@@ -300,8 +298,9 @@ func getInterfaceIP(iface string) (ipv4, ipv6 string) {
 }
 
 // pingLatency 测试到目标地址的延迟（毫秒），iface 指定绑定接口
-func pingLatency(target, iface string) int {
-	args := []string{"-c", "1", "-W", "2"}
+// count 指定 ping 的次数，返回平均延迟
+func pingLatency(target, iface string, count int) int {
+	args := []string{"-c", strconv.Itoa(count), "-W", "2"}
 	if iface != "" {
 		args = append(args, "-I", iface)
 	}
@@ -312,7 +311,27 @@ func pingLatency(target, iface string) int {
 		return -1
 	}
 	
+	// 解析 avg 延迟
 	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "avg") || strings.Contains(line, "average") {
+			// 格式：rtt min/avg/max/mdev = 10.0/20.0/30.0/5.0 ms
+			parts := strings.Split(line, "=")
+			if len(parts) >= 2 {
+				stats := strings.Split(parts[1], "/")
+				if len(stats) >= 2 {
+					if t, err := strconv.ParseFloat(strings.TrimSpace(stats[1]), 64); err == nil {
+						return int(t)
+					}
+				}
+			}
+		}
+	}
+	
+	// 备用：从单个 time= 解析
+	lines = strings.Split(string(output), "\n")
+	var total float64
+	var validCount int
 	for _, line := range lines {
 		if strings.Contains(line, "time=") {
 			parts := strings.Split(line, "time=")
@@ -320,16 +339,21 @@ func pingLatency(target, iface string) int {
 				timeStr := strings.Split(parts[1], " ")[0]
 				timeStr = strings.TrimSuffix(timeStr, "ms")
 				if t, err := strconv.ParseFloat(timeStr, 64); err == nil {
-					return int(t)
+					total += t
+					validCount++
 				}
 			}
 		}
 	}
 	
+	if validCount > 0 {
+		return int(total / float64(validCount))
+	}
+	
 	return -1
 }
 
-// pingWithHistory 并行测试多个目标的延迟，保存最近5次历史记录
+// pingWithHistory 并行测试多个目标的延迟，每个目标 ping 5 次取平均
 func (w *WANCollector) pingWithHistory(targets []string, iface string) []LatencyResult {
 	type result struct {
 		target  string
@@ -340,7 +364,8 @@ func (w *WANCollector) pingWithHistory(targets []string, iface string) []Latency
 	
 	for _, t := range targets {
 		go func(target string) {
-			ch <- result{target: target, latency: pingLatency(target, iface)}
+			// 每个目标 ping 5 次，取平均延迟
+			ch <- result{target: target, latency: pingLatency(target, iface, 5)}
 		}(t)
 	}
 	
@@ -352,23 +377,14 @@ func (w *WANCollector) pingWithHistory(targets []string, iface string) []Latency
 			name = "baidu"
 		} else if name == "1.1.1.1" {
 			name = "cloudflare"
-		} else if name == "114.114.114" {
+		} else if name == "114.114.114.114" {
 			name = "default"
-		}
-		
-		if w.latencyHistory[iface] == nil {
-			w.latencyHistory[iface] = make(map[string][]int)
-		}
-		
-		w.latencyHistory[iface][name] = append(w.latencyHistory[iface][name], r.latency)
-		if len(w.latencyHistory[iface][name]) > w.latencyHistorySize {
-			w.latencyHistory[iface][name] = w.latencyHistory[iface][name][1:]
 		}
 		
 		results = append(results, LatencyResult{
 			Target:    name,
 			Latency:   r.latency,
-			Latencies: w.latencyHistory[iface][name],
+			Latencies: []int{r.latency}, // 单次平均值
 		})
 	}
 	
@@ -386,7 +402,7 @@ func pingMultiple(targets []string, iface string) []LatencyResult {
 	
 	for _, t := range targets {
 		go func(target string) {
-			ch <- result{target: target, latency: pingLatency(target, iface)}
+			ch <- result{target: target, latency: pingLatency(target, iface, 5)}
 		}(t)
 	}
 	
@@ -398,7 +414,7 @@ func pingMultiple(targets []string, iface string) []LatencyResult {
 			name = "baidu"
 		} else if name == "1.1.1.1" {
 			name = "cloudflare"
-		} else if name == "114.114.114" {
+		} else if name == "114.114.114.114" {
 			name = "default"
 		}
 		results = append(results, LatencyResult{Target: name, Latency: r.latency})

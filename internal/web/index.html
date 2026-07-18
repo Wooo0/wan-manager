@@ -361,33 +361,6 @@
             height: 100%;
         }
         
-        .wan-stats {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-        }
-        
-        .stat-item {
-            background: var(--bg);
-            border-radius: 8px;
-            padding: 12px;
-        }
-        
-        .stat-label {
-            font-size: 11px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 4px;
-        }
-        
-        .stat-value {
-            font-size: 16px;
-            font-weight: 600;
-            color: var(--text-primary);
-            font-variant-numeric: tabular-nums;
-        }
-        
         .network-info {
             margin-top: 16px;
             padding-top: 16px;
@@ -1352,49 +1325,44 @@
             }
         }
         
-        function renderMiniChart(rxHistory, txHistory, isSpeedCard = false) {
-            const rxMax = rxHistory.length > 0 ? Math.max(...rxHistory) : 1;
-            const txMax = txHistory.length > 0 ? Math.max(...txHistory) : 1;
-            const maxVal = Math.max(rxMax, txMax, 1);
-            
-            let rxPoints = '';
-            if (rxHistory.length > 0) {
-                const step = 100 / (rxHistory.length - 1);
-                rxPoints = rxHistory.map((v, i) => {
-                    const x = i * step;
-                    const y = 100 - (v / maxVal * 100);
-                    return `${x},${y}`;
-                }).join(' ');
+        function renderSpeedChart(history, isDownload) {
+            if (!history || history.length === 0) {
+                return '<div class="speed-chart-container"><svg viewBox="0 0 100 32" preserveAspectRatio="none"></svg></div>';
             }
             
-            let txPoints = '';
-            if (txHistory.length > 0) {
-                const step = 100 / (txHistory.length - 1);
-                txPoints = txHistory.map((v, i) => {
-                    const x = i * step;
-                    const y = 100 - (v / maxVal * 100);
-                    return `${x},${y}`;
-                }).join(' ');
+            const maxVal = Math.max(...history, 1);
+            const width = 100;
+            const height = 32;
+            const padding = 2;
+            
+            // 生成平滑曲线路径
+            const points = history.map((v, i) => {
+                const x = padding + (i / (history.length - 1 || 1)) * (width - 2 * padding);
+                const y = height - padding - (v / maxVal) * (height - 2 * padding);
+                return { x, y };
+            });
+            
+            // 生成 SVG 路径
+            let pathD = `M ${points[0].x} ${points[0].y}`;
+            for (let i = 1; i < points.length; i++) {
+                const prev = points[i - 1];
+                const curr = points[i];
+                // 使用贝塞尔曲线使线条更平滑
+                const cpX = (prev.x + curr.x) / 2;
+                pathD += ` C ${cpX} ${prev.y}, ${cpX} ${curr.y}, ${curr.x} ${curr.y}`;
             }
             
-            if (isSpeedCard) {
-                return `
-                    <div class="speed-chart">
-                        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;">
-                            ${rxPoints ? `<polyline fill="rgba(40, 167, 69, 0.15)" stroke="#28a745" stroke-width="2.5" points="${rxPoints} 100,0 100,100" />` : ''}
-                            ${rxPoints ? `<polyline fill="none" stroke="#28a745" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${rxPoints}" />` : ''}
-                        </svg>
-                    </div>
-                `;
-            }
+            // 填充区域路径
+            const fillD = pathD + ` L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`;
+            
+            const color = isDownload ? '#10b981' : '#3b82f6';
+            const fillColor = isDownload ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.1)';
             
             return `
-                <div class="mini-chart">
-                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;">
-                        ${rxPoints ? `<polyline fill="rgba(40, 167, 69, 0.1)" stroke="#28a745" stroke-width="2" points="${rxPoints} 100,0 100,100" />` : ''}
-                        ${rxPoints ? `<polyline fill="none" stroke="#28a745" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="${rxPoints}" />` : ''}
-                        ${txPoints ? `<polyline fill="rgba(3, 102, 214, 0.1)" stroke="#0366d6" stroke-width="2" points="${txPoints} 100,0 100,100" />` : ''}
-                        ${txPoints ? `<polyline fill="none" stroke="#0366d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="${txPoints}" />` : ''}
+                <div class="speed-chart-container">
+                    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+                        <path d="${fillD}" fill="${fillColor}" />
+                        <path d="${pathD}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                 </div>
             `;
@@ -1402,18 +1370,14 @@
         
         function renderLatencyGrid(latencies, wanName) {
             const latencyMap = {};
-            const historyMap = {};
             if (latencies) {
                 latencies.forEach(l => {
                     latencyMap[l.target] = l.latency;
-                    historyMap[l.target] = l.latencies || [];
                 });
             }
             
             const baiduLat = latencyMap['baidu'] !== undefined ? latencyMap['baidu'] : -1;
-            const baiduHistory = historyMap['baidu'] || [];
             const cfLat = latencyMap['cloudflare'] !== undefined ? latencyMap['cloudflare'] : -1;
-            const cfHistory = historyMap['cloudflare'] || [];
             
             const getLatencyClass = (lat) => {
                 if (lat < 0) return '';
@@ -1422,31 +1386,6 @@
                 return 'critical';
             };
             
-            const renderBars = (history) => {
-                const bars = [];
-                for (let i = 0; i < 5; i++) {
-                    const idx = history.length - 5 + i;
-                    const lat = idx >= 0 ? history[idx] : -1;
-                    const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
-                    bars.push(`<div class="latency-bar ${getLatencyClass(lat)}" style="height: ${h}%;"></div>`);
-                }
-                return bars.join('');
-            };
-            
-            const calcStats = (history) => {
-                const valid = history.filter(l => l >= 0);
-                if (valid.length === 0) {
-                    return { min: '--', avg: '--', max: '--' };
-                }
-                const min = Math.min(...valid);
-                const max = Math.max(...valid);
-                const avg = Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
-                return { min, avg, max };
-            };
-            
-            const baiduStats = calcStats(baiduHistory);
-            const cfStats = calcStats(cfHistory);
-            
             return `
                 <div class="latency-grid">
                     <div class="latency-item">
@@ -1454,27 +1393,11 @@
                             <span class="latency-name">Baidu</span>
                             <span class="latency-value ${getLatencyClass(baiduLat)}">${baiduLat >= 0 ? baiduLat + ' ms' : '-- ms'}</span>
                         </div>
-                        <div class="latency-bars">
-                            ${renderBars(baiduHistory)}
-                        </div>
-                        <div class="latency-stats">
-                            <span class="latency-stat"><span class="stat-label">min</span> ${baiduStats.min}ms</span>
-                            <span class="latency-stat"><span class="stat-label">avg</span> ${baiduStats.avg}ms</span>
-                            <span class="latency-stat"><span class="stat-label">max</span> ${baiduStats.max}ms</span>
-                        </div>
                     </div>
                     <div class="latency-item">
                         <div class="latency-header">
                             <span class="latency-name">Cloudflare</span>
                             <span class="latency-value ${getLatencyClass(cfLat)}">${cfLat >= 0 ? cfLat + ' ms' : '-- ms'}</span>
-                        </div>
-                        <div class="latency-bars">
-                            ${renderBars(cfHistory)}
-                        </div>
-                        <div class="latency-stats">
-                            <span class="latency-stat"><span class="stat-label">min</span> ${cfStats.min}ms</span>
-                            <span class="latency-stat"><span class="stat-label">avg</span> ${cfStats.avg}ms</span>
-                            <span class="latency-stat"><span class="stat-label">max</span> ${cfStats.max}ms</span>
                         </div>
                     </div>
                 </div>
@@ -1503,7 +1426,12 @@
         function togglePrivacy(wanName, btn) {
             btn.classList.toggle('active');
             const isHidden = btn.classList.contains('active');
+            privacyStates[wanName] = isHidden;
             
+            applyPrivacy(wanName, isHidden);
+        }
+        
+        function applyPrivacy(wanName, isHidden) {
             const ipv4El = document.getElementById(`stat-ipv4-${wanName}`);
             const ipv6El = document.getElementById(`stat-ipv6-${wanName}`);
             const dnsEl = document.getElementById(`stat-dns-${wanName}`);
@@ -1571,6 +1499,11 @@
                 
                 const latencyGridHtml = renderLatencyGrid(wan.latencies || [], wan.name);
                 
+                // 检查隐私状态
+                const isPrivacyHidden = privacyStates[wan.name] || false;
+                const privacyClass = isPrivacyHidden ? 'active' : '';
+                const displayValue = (val) => isPrivacyHidden ? '***.***.***.***' : (val || '--');
+                
                 return `
                     <div class="wan-card">
                         <div class="wan-header">
@@ -1592,7 +1525,7 @@
                                 <div class="speed-value download">
                                     ${rxSpeed.value}<span class="unit">${rxSpeed.unit}</span>
                                 </div>
-                                ${renderMiniChart(wan.rx_history || [], [], true)}
+                                ${renderSpeedChart(wan.rx_history || [], true)}
                                 <div class="speed-total">总计 ${formatBytes(wan.rx_bytes || 0)}</div>
                             </div>
                             <div class="speed-box">
@@ -1600,7 +1533,7 @@
                                 <div class="speed-value upload">
                                     ${txSpeed.value}<span class="unit">${txSpeed.unit}</span>
                                 </div>
-                                ${renderMiniChart([], wan.tx_history || [], true)}
+                                ${renderSpeedChart(wan.tx_history || [], false)}
                                 <div class="speed-total">总计 ${formatBytes(wan.tx_bytes || 0)}</div>
                             </div>
                         </div>
@@ -1609,22 +1542,22 @@
                             <div class="network-info-header">
                                 <span>网络信息</span>
                                 <div class="network-info-actions">
-                                    <button class="network-info-btn" onclick="togglePrivacy('${wan.name}', this)" title="隐藏敏感信息">👁</button>
+                                    <button class="network-info-btn ${privacyClass}" onclick="togglePrivacy('${wan.name}', this)" title="隐藏敏感信息">👁</button>
                                     <button class="network-info-btn" onclick="refreshISP('${wan.name}')" title="重新检测">↻</button>
                                 </div>
                             </div>
-                            <div class="wan-stats">
-                                <div class="stat-item" id="stat-ipv4-${wan.name}">
-                                    <div class="stat-label">IPv4</div>
-                                    <div class="stat-value">${wan.ipv4 || '--'}</div>
+                            <div class="network-info-content">
+                                <div class="info-row">
+                                    <span class="info-label">IPv4</span>
+                                    <span class="info-value" id="stat-ipv4-${wan.name}" data-original="${wan.ipv4 || ''}">${displayValue(wan.ipv4)}</span>
                                 </div>
-                                <div class="stat-item" id="stat-ipv6-${wan.name}">
-                                    <div class="stat-label">IPv6</div>
-                                    <div class="stat-value">${wan.ipv6 || '--'}</div>
+                                <div class="info-row">
+                                    <span class="info-label">IPv6</span>
+                                    <span class="info-value" id="stat-ipv6-${wan.name}" data-original="${wan.ipv6 || ''}">${displayValue(wan.ipv6)}</span>
                                 </div>
-                                <div class="stat-item" id="stat-dns-${wan.name}">
-                                    <div class="stat-label">DNS</div>
-                                    <div class="stat-value">${wan.dns || '--'}</div>
+                                <div class="info-row">
+                                    <span class="info-label">DNS</span>
+                                    <span class="info-value" id="stat-dns-${wan.name}" data-original="${wan.dns || ''}">${displayValue(wan.dns)}</span>
                                 </div>
                             </div>
                         </div>
@@ -1687,6 +1620,7 @@
         
         let currentSubTab = 'ip';
         let selectedApps = [];
+        let privacyStates = {}; // 保存每个 WAN 口的隐私状态
         
         const appCatalog = {
             'Web': ['http', 'https'],
