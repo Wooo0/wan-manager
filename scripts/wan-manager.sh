@@ -130,10 +130,20 @@ download_file() {
     url="$1"
     output="$2"
     timeout="${3:-15}"  # 默认 15 秒超时
+    show_progress="${4:-true}"  # 默认显示进度
+    
     if command -v curl >/dev/null 2>&1; then
-        curl -sSL --connect-timeout 5 --max-time "$timeout" -o "$output" "$url" 2>/dev/null
+        if [ "$show_progress" = "true" ]; then
+            curl -L --progress-bar --connect-timeout 5 --max-time "$timeout" -o "$output" "$url" 2>/dev/null
+        else
+            curl -sSL --connect-timeout 5 --max-time "$timeout" -o "$output" "$url" 2>/dev/null
+        fi
     elif command -v wget >/dev/null 2>&1; then
-        wget -q --timeout=5 -T "$timeout" -O "$output" "$url" 2>/dev/null
+        if [ "$show_progress" = "true" ]; then
+            wget --show-progress --timeout=5 -T "$timeout" -O "$output" "$url" 2>&1
+        else
+            wget -q --timeout=5 -T "$timeout" -O "$output" "$url" 2>/dev/null
+        fi
     else
         return 1
     fi
