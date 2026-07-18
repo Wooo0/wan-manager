@@ -1318,18 +1318,30 @@
                     <div id="balanceSection" class="balance-section" style="margin-bottom: 20px;">
                         <div class="balance-header">WAN口转发比例</div>
                         <div class="balance-row">
-                            <span class="balance-label">WAN1</span>
+                            <span class="balance-label" id="wan1Name">WAN1</span>
                             <span class="balance-value" id="wan1Ratio">-</span>
                             <span class="balance-colon">:</span>
                             <span class="balance-value" id="wan2Ratio">-</span>
-                            <span class="balance-label">WAN2</span>
+                            <span class="balance-label" id="wan2Name">WAN2</span>
                         </div>
                         <div class="balance-hint" style="font-size:12px;color:#888;margin-top:8px;">
-                            此比例由 mwan3 管理，请在路由器 mwan3 配置中修改
+                            比例来自 mwan3 <b>balanced</b> 策略中各 WAN member 的 weight（即负载均衡时的真实分流比）。本例 wan:wan_2 = 1:2。
                         </div>
                     </div>
                     
                     <div id="mwan3Rules">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <div>加载中...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 源设备转发规则（小米等路由器通常在 mwan3 之外维护） -->
+                    <div class="balance-header" style="margin-top: 24px;">源设备转发规则</div>
+                    <div class="balance-hint" style="font-size:12px;color:#888;margin-bottom:12px;">
+                        按设备 MAC 固定走某个 WAN 口。本路由器的规则写在 mwan3 的 <b>device</b> 段（由 mwan3 自动生成 ipset 与匹配规则），而非独立 iptables/xq3。
+                    </div>
+                    <div id="deviceRules">
                         <div class="loading">
                             <div class="spinner"></div>
                             <div>加载中...</div>
@@ -1930,6 +1942,10 @@
                 if (data.balance_ratio) {
                     document.getElementById('wan1Ratio').textContent = data.balance_ratio.wan1 || 1;
                     document.getElementById('wan2Ratio').textContent = data.balance_ratio.wan2 || 1;
+                    const wan1NameEl = document.getElementById('wan1Name');
+                    const wan2NameEl = document.getElementById('wan2Name');
+                    if (wan1NameEl) wan1NameEl.textContent = data.balance_ratio.wan1_name || 'WAN1';
+                    if (wan2NameEl) wan2NameEl.textContent = data.balance_ratio.wan2_name || 'WAN2';
                 }
                 
                 const mwan3Rules = data.mwan3_rules || [];
@@ -1960,9 +1976,9 @@
                                 ${mwan3Rules.map(rule => `
                                     <tr>
                                         <td>${rule.name || '-'}</td>
-                                        <td style="font-family: monospace; font-size: 12px;">${rule.src || '-'}</td>
-                                        <td style="font-family: monospace; font-size: 12px;">${rule.dst || '-'}</td>
-                                        <td>${rule.proto || '-'}</td>
+                                        <td style="font-family: monospace; font-size: 12px;">${rule.src || '<span style="color: var(--text-muted);">任意</span>'}</td>
+                                        <td style="font-family: monospace; font-size: 12px;">${rule.dst || '<span style="color: var(--text-muted);">任意</span>'}</td>
+                                        <td>${rule.proto || '<span style="color: var(--text-muted);">任意</span>'}</td>
                                         <td><span class="rule-type-badge mwan3">${rule.use_policy || '-'}</span></td>
                                         <td>${rule.enabled ? '已启用' : '已禁用'}</td>
                                     </tr>
@@ -1972,6 +1988,45 @@
                     `;
                 } else {
                     mwan3RulesDiv.innerHTML = '<div class="empty-state">暂无 mwan3 转发规则</div>';
+                }
+                
+                const deviceRulesDiv = document.getElementById('deviceRules');
+                const deviceRules = data.device_rules || [];
+                if (deviceRules.length > 0) {
+                    deviceRulesDiv.innerHTML = `
+                        <table class="rule-table">
+                            <thead>
+                                <tr>
+                                    <th>设备名称</th>
+                                    <th>MAC 地址</th>
+                                    <th>WAN 口策略</th>
+                                    <th>来源</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${deviceRules.map(rule => `
+                                    <tr>
+                                        <td>${rule.name || '-'}</td>
+                                        <td style="font-family: monospace; font-size: 12px;">${rule.mac || '-'}</td>
+                                        <td><span class="rule-type-badge ${rule.wan || 'custom'}">${
+                                            rule.policy === 'wan1_priority' ? 'WAN1 优先' :
+                                            rule.policy === 'wan2_priority' ? 'WAN2 优先' :
+                                            rule.policy === 'wan1_only' || rule.wan === 'wan1' ? 'WAN1 独占' :
+                                            rule.policy === 'wan2_only' || rule.wan === 'wan2' ? 'WAN2 独占' :
+                                            rule.policy === 'only' ? '固定走 ' + (rule.wan || '指定出口') :
+                                            rule.policy === 'balanced' ? '负载均衡' :
+                                            (rule.policy || rule.wan || '-')
+                                        }</span></td>
+                                        <td>${rule.source || '-'}</td>
+                                        <td>${rule.enabled ? '已启用' : '已禁用'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                } else {
+                    deviceRulesDiv.innerHTML = '<div class="empty-state">未检测到源设备转发规则（可能由小米路由器独立维护，未通过 iptables/xq3 暴露）</div>';
                 }
                 
                 const customRulesDiv = document.getElementById('customRules');
@@ -2068,6 +2123,12 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ enabled: enabled })
             }).then(res => res.json()).then(data => {
+                // 后端只有真正成功切换才会返回 expected 的 enabled 值；失败时返回 message 且可能不带 enabled
+                if (data.enabled !== enabled) {
+                    label.textContent = toggle.classList.contains('active') ? '策略路由已启用' : '策略路由已关闭';
+                    showToast(data.message || '操作失败，请稍后重试', 'error');
+                    return;
+                }
                 if (enabled) {
                     toggle.classList.add('active');
                     label.textContent = '策略路由已启用';
@@ -2075,6 +2136,8 @@
                     toggle.classList.remove('active');
                     label.textContent = '策略路由已关闭';
                 }
+                // 主开关切换后必须同步刷新 ISP 子开关的可用/禁用状态
+                updateISPToggle(enabled, !!data.isp_enabled, data.isp_unmatched || '');
                 showToast(data.message || (enabled ? '策略路由已启用' : '策略路由已关闭'), 'success');
             }).catch(err => {
                 label.textContent = toggle.classList.contains('active') ? '策略路由已启用' : '策略路由已关闭';
@@ -2122,6 +2185,11 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ isp_enabled: enabled })
             }).then(res => res.json()).then(data => {
+                // 后端只有真正成功切换才会返回 expected 的 isp_enabled 值；失败时返回 message 且可能不带 isp_enabled
+                if (data.isp_enabled !== enabled) {
+                    showToast(data.message || '操作失败，请稍后重试', 'error');
+                    return;
+                }
                 if (data.isp_enabled) {
                     ispToggle.classList.add('active');
                 } else {

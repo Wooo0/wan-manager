@@ -4,7 +4,7 @@ listen_addr = ":8899"
 
 [collector]
 # 数据采集间隔（秒）
-interval = 2
+interval = 1
 
 # WAN 口配置
 [[wan]]

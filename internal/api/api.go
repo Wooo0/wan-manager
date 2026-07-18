@@ -186,15 +186,14 @@ func (h *APIHandler) handleGetRouting(w http.ResponseWriter, r *http.Request) {
 		result["mwan3_enabled"] = true
 		result["mwan3"] = mwan3Config
 
-		wan1Weight, wan2Weight := routing.GetWAN1WAN2Ratio(mwan3Config)
+		wan1Name, wan1Weight, wan2Name, wan2Weight := routing.GetWAN1WAN2Ratio(mwan3Config)
 		result["balance_ratio"] = map[string]interface{}{
-			"wan1":    wan1Weight,
-			"wan2":    wan2Weight,
-			"display": fmt.Sprintf("%d:%d", wan1Weight, wan2Weight),
+			"wan1":      wan1Weight,
+			"wan2":      wan2Weight,
+			"wan1_name": wan1Name,
+			"wan2_name": wan2Name,
+			"display":   fmt.Sprintf("%s : %s = %d : %d", wan1Name, wan2Name, wan1Weight, wan2Weight),
 		}
-
-		// 返回所有 mwan3 规则（包括默认策略规则）
-		result["mwan3_rules"] = mwan3Config.Rules
 
 		// 同时返回解析后的自定义规则（用于兼容）
 		ipRules := routing.ParseIPRulesFromMWAN3(mwan3Config)
@@ -203,6 +202,15 @@ func (h *APIHandler) handleGetRouting(w http.ResponseWriter, r *http.Request) {
 		result["mwan3_enabled"] = false
 		result["mwan3_rules"] = []interface{}{}
 	}
+
+	// 源设备(MAC) -> WAN 转发规则：优先从 mwan3 的 device 段解析，
+	// 回落到 iptables MAC 链 / xq3 / miwifi 等独立配置
+	deviceRules := routing.LoadDeviceWANRulesFromMWAN3(mwan3Config)
+	if len(deviceRules) == 0 {
+		deviceRules = routing.LoadDeviceWANRules()
+	}
+	result["device_rules"] = deviceRules
+	result["device_policy_options"] = routing.DeviceRulePolicyOptions()
 
 	// WAN 口列表（供前端运营商未匹配出口下拉使用）
 	wans := []string{}
@@ -320,8 +328,10 @@ func (h *APIHandler) handlePostRouting(w http.ResponseWriter, r *http.Request) {
 				msg = "策略路由已启用"
 			}
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"message": msg,
-				"enabled": enabled,
+				"message":       msg,
+				"enabled":       enabled,
+				"isp_enabled":   cfg.ISP.Enabled,
+				"isp_unmatched": cfg.ISP.Unmatched,
 			})
 			return
 		}

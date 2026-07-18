@@ -40,7 +40,7 @@ func DefaultConfig() *Config {
 			ListenAddr: ":8899",
 		},
 		Collector: CollectorConfig{
-			Interval: 2,
+			Interval: 1,
 		},
 		WAN: []WANConfig{
 			{Name: "wan1", Interface: "pppoe-wan", Label: "WAN1"},
