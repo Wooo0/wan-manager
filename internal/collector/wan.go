@@ -2,6 +2,7 @@ package collector
 
 import (
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,10 @@ type WANStats struct {
 	RxSpeed   float64 `json:"rx_speed"`
 	TxSpeed   float64 `json:"tx_speed"`
 	Connected bool    `json:"connected"`
+	IPv4      string  `json:"ipv4,omitempty"`
+	IPv6      string  `json:"ipv6,omitempty"`
+	DNS       string  `json:"dns,omitempty"`
+	Latency   int     `json:"latency,omitempty"`  // 延迟（毫秒）
 	ISP       *isp.Info `json:"isp,omitempty"`
 }
 
@@ -102,6 +107,9 @@ func (w *WANCollector) collect() {
 			s.Connected = true
 			// Mock ISP 信息
 			s.ISP = mockData.isp
+			// Mock IP 和延迟
+			s.IPv4 = mockData.isp.IP
+			s.Latency = 15
 		} else {
 			prev, hasPrev := w.prevData[wc.Interface]
 			if hasPrev && !prev.timestamp.IsZero() {
@@ -116,6 +124,14 @@ func (w *WANCollector) collect() {
 				}
 			}
 			s.Connected = s.RxBytes > 0 || s.TxBytes > 0
+			
+			// 获取 IP 地址
+			s.IPv4, s.IPv6 = getInterfaceIP(wc.Interface)
+			
+			// 测试延迟（使用 114.114.114.114 作为目标）
+			if s.Connected {
+				s.Latency = pingLatency("114.114.114.114")
+			}
 		}
 
 		stats = append(stats, s)
@@ -182,4 +198,66 @@ func readUint64(path string) (uint64, error) {
 		return 0, err
 	}
 	return strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+}
+
+// getInterfaceIP 获取网络接口的 IP 地址
+func getInterfaceIP(iface string) (ipv4, ipv6 string) {
+	// 使用 ip addr show 命令获取 IP 地址
+	cmd := exec.Command("ip", "addr", "show", iface)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", ""
+	}
+	
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "inet ") {
+			// IPv4: inet 192.168.1.1/24 brd ...
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				addr := strings.Split(parts[1], "/")[0]
+				ipv4 = addr
+			}
+		} else if strings.HasPrefix(line, "inet6 ") {
+			// IPv6: inet6 fe80::1/64 scope link ...
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				addr := strings.Split(parts[1], "/")[0]
+				// 跳过 link-local 地址
+				if !strings.HasPrefix(addr, "fe80:") {
+					ipv6 = addr
+				}
+			}
+		}
+	}
+	
+	return ipv4, ipv6
+}
+
+// pingLatency 测试到目标地址的延迟（毫秒）
+func pingLatency(target string) int {
+	cmd := exec.Command("ping", "-c", "1", "-W", "2", target)
+	output, err := cmd.Output()
+	if err != nil {
+		return -1
+	}
+	
+	// 解析 ping 输出，查找 time=XX.XX ms
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "time=") {
+			// 例如：64 bytes from 114.114.114.114: icmp_seq=1 ttl=128 time=12.3 ms
+			parts := strings.Split(line, "time=")
+			if len(parts) >= 2 {
+				timeStr := strings.Split(parts[1], " ")[0]
+				timeStr = strings.TrimSuffix(timeStr, "ms")
+				if t, err := strconv.ParseFloat(timeStr, 64); err == nil {
+					return int(t)
+				}
+			}
+		}
+	}
+	
+	return -1
 }

@@ -17,6 +17,7 @@ type APIHandler struct {
 	wanCollector    *collector.WANCollector
 	clientCollector *collector.ClientCollector
 	routingManager  *routing.Manager
+	version         string
 }
 
 // SummaryResponse 汇总响应
@@ -35,11 +36,12 @@ type RoutingStatus struct {
 }
 
 // NewAPIHandler 创建 API 处理器
-func NewAPIHandler(wc *collector.WANCollector, cc *collector.ClientCollector, rm *routing.Manager) *APIHandler {
+func NewAPIHandler(wc *collector.WANCollector, cc *collector.ClientCollector, rm *routing.Manager, version string) *APIHandler {
 	return &APIHandler{
 		wanCollector:    wc,
 		clientCollector: cc,
 		routingManager:  rm,
+		version:         version,
 	}
 }
 
@@ -49,6 +51,7 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleRoot)
 	
 	// API 接口
+	mux.HandleFunc("/api/v1/version", h.handleVersion)
 	mux.HandleFunc("/api/v1/summary", h.handleSummary)
 	mux.HandleFunc("/api/v1/wan", h.handleWAN)
 	mux.HandleFunc("/api/v1/clients", h.handleClients)
@@ -57,6 +60,14 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/apps/catalog", h.handleAppCatalog)
 	mux.HandleFunc("/api/v1/dpi/flows", h.handleDPIFlows)
 	mux.HandleFunc("/api/v1/isp/logo", h.handleISPLogo)
+}
+
+// handleVersion 返回版本信息
+func (h *APIHandler) handleVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(map[string]string{
+		"version": h.version,
+	})
 }
 
 // handleRoot 根路径返回 Web 管理界面
@@ -72,7 +83,7 @@ func (h *APIHandler) handleRoot(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"name":    "wan-manager",
-			"version": "running",
+			"version": h.version,
 			"endpoints": []string{
 				"/api/v1/health",
 				"/api/v1/summary",

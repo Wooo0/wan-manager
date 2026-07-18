@@ -1258,6 +1258,18 @@
             return `<span style="font-size:12px;font-weight:bold;color:#6c757d;">${isp}</span>`;
         }
         
+        async function loadVersion() {
+            try {
+                const res = await fetch('/api/v1/version');
+                const data = await res.json();
+                if (data.version) {
+                    document.getElementById('versionText').textContent = data.version;
+                }
+            } catch (e) {
+                console.error('获取版本失败:', e);
+            }
+        }
+        
         async function loadWANStatus() {
             try {
                 const res = await fetch('/api/v1/wan');
@@ -1284,11 +1296,14 @@
                         `;
                     }
                     
+                    // 确保标题只显示 WAN1/WAN2，不包含运营商信息
+                    const displayName = (wan.label || wan.name || 'WAN').toUpperCase();
+                    
                     return `
                         <div class="wan-card">
                             <div class="wan-header">
                                 <div>
-                                    <div class="wan-name">${wan.label || wan.name}</div>
+                                    <div class="wan-name">${displayName}</div>
                                     <div class="wan-label">${wan.interface}</div>
                                 </div>
                                 <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
@@ -1329,22 +1344,22 @@
                                 </div>
                                 <div class="stat-item">
                                     <div class="stat-label">延迟</div>
-                                    <div class="stat-value">-- ms</div>
+                                    <div class="stat-value">${wan.latency >= 0 ? wan.latency + ' ms' : '-- ms'}</div>
                                 </div>
                             </div>
                             
                             <div class="network-info">
                                 <div class="info-row">
                                     <span class="info-label">IPv4</span>
-                                    <span class="info-value">--</span>
+                                    <span class="info-value">${wan.ipv4 || '--'}</span>
                                 </div>
                                 <div class="info-row">
                                     <span class="info-label">IPv6</span>
-                                    <span class="info-value">--</span>
+                                    <span class="info-value">${wan.ipv6 || '--'}</span>
                                 </div>
                                 <div class="info-row">
                                     <span class="info-label">DNS</span>
-                                    <span class="info-value">--</span>
+                                    <span class="info-value">${wan.dns || '--'}</span>
                                 </div>
                             </div>
                             
@@ -1786,7 +1801,7 @@
         }
         
         async function init() {
-            await Promise.all([loadWANStatus(), loadClients(), loadRouting()]);
+            await Promise.all([loadVersion(), loadWANStatus(), loadClients(), loadRouting()]);
         }
         
         setInterval(async () => {

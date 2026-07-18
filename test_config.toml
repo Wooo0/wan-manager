@@ -1,0 +1,15 @@
+[server]
+listen_addr = ":8898"
+
+[collector]
+interval = 2
+
+[[wan]]
+name = "wan1"
+label = "WAN1"
+interface = "pppoe-wan"
+
+[[wan]]
+name = "wan2"
+label = "WAN2"
+interface = "pppoe-wan_2"
