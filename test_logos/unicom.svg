@@ -1,5 +1,0 @@
-<svg viewBox="0 0 50 20" width="200" height="80" xmlns="http://www.w3.org/2000/svg">
-  <path d="M7 10c0 -3 2.5 -5.5 5.5 -5.5c1.2 0 2.3 0.4 3.2 1l-1 1.2c-0.7 -0.5 -1.4 -0.7 -2.2 -0.7c-1.9 0 -3.5 1.6 -3.5 4s1.6 4 3.5 4c0.8 0 1.5 -0.2 2.2 -0.7l1 1.2c-0.9 0.6 -2 1 -3.2 1c-3 0 -5.5 -2.5 -5.5 -5.5z" fill="#cc0000"/>
-  <path d="M14 7v6l3 -3L14 7z" fill="#e60012"/>
-  <text x="20" y="14" fill="#cc0000" font-size="11" font-weight="bold" font-family="sans-serif">中国联通</text>
-</svg>

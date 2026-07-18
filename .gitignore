@@ -5,6 +5,10 @@ dist/
 *.out
 *.test
 
+# 编译产物（由 GitHub Actions 构建）
+wan-manager-linux-*
+*.tar.gz
+
 # 编辑器
 .vscode/
 .idea/
@@ -17,3 +21,8 @@ Thumbs.db
 
 # 日志
 *.log
+*.pid
+
+# 本地测试文件
+test_config.toml
+test_logos/
