@@ -35,6 +35,8 @@ fi
 GITHUB_REPO="Wooo0/wan-manager"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
+# GitHub 镜像（国内访问更快）
+GITHUB_MIRROR="https://ghfast.top/https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -127,13 +129,30 @@ get_latest_version() {
 download_file() {
     url="$1"
     output="$2"
+    timeout="${3:-15}"  # 默认 15 秒超时
     if command -v curl >/dev/null 2>&1; then
-        curl -sSL --connect-timeout 10 --max-time 30 -o "$output" "$url"
+        curl -sSL --connect-timeout 5 --max-time "$timeout" -o "$output" "$url" 2>/dev/null
     elif command -v wget >/dev/null 2>&1; then
-        wget -q --timeout=10 -O "$output" "$url"
+        wget -q --timeout=5 -T "$timeout" -O "$output" "$url" 2>/dev/null
     else
         return 1
     fi
+}
+
+# 下载文件（自动尝试镜像）
+download_with_mirror() {
+    url="$1"
+    output="$2"
+    timeout="${3:-10}"
+    # 先尝试镜像
+    if download_file "$url" "$output" "$timeout"; then
+        return 0
+    fi
+    # 镜像失败，尝试原地址
+    if download_file "${GITHUB_RAW}/$(echo "$url" | sed "s|${GITHUB_MIRROR}||")" "$output" "$timeout"; then
+        return 0
+    fi
+    return 1
 }
 
 get_run_time() {
@@ -642,7 +661,15 @@ update_service() {
 
     echo -e "  正在更新管理脚本..."
     # 下载到临时文件，避免覆盖正在执行的自身脚本导致 shell 读取错位
-    if download_file "${GITHUB_RAW}/scripts/wan-manager.sh" "${INSTALL_DIR}/wan-manager.sh.new" 2>/dev/null; then
+    # 使用镜像源 + 短超时，快速失败
+    script_updated=false
+    if download_file "${GITHUB_MIRROR}/scripts/wan-manager.sh" "${INSTALL_DIR}/wan-manager.sh.new" 8; then
+        script_updated=true
+    elif download_file "${GITHUB_RAW}/scripts/wan-manager.sh" "${INSTALL_DIR}/wan-manager.sh.new" 8; then
+        script_updated=true
+    fi
+    
+    if [ "$script_updated" = true ]; then
         # 保持当前安装路径不变（避免新脚本重置为默认路径 /usr/bin）
         sed -i "s|INSTALL_DIR=\"/usr/bin\"|INSTALL_DIR=\"${INSTALL_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh.new" 2>/dev/null
         sed -i "s|CONFIG_DIR=\"/etc/wan-manager\"|CONFIG_DIR=\"${CONFIG_DIR}\"|g" "${INSTALL_DIR}/wan-manager.sh.new" 2>/dev/null
