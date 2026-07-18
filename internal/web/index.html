@@ -294,40 +294,55 @@
         .speed-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-bottom: 20px;
+            gap: 12px;
+            margin-bottom: 16px;
         }
         
         .speed-box {
             background: var(--bg);
             border-radius: 10px;
-            padding: 16px;
+            padding: 14px;
+            position: relative;
+            overflow: hidden;
         }
         
         .speed-label {
-            font-size: 12px;
+            font-size: 11px;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
         
         .speed-value {
-            font-size: 28px;
+            font-size: 26px;
             font-weight: 700;
             font-variant-numeric: tabular-nums;
             color: var(--text-primary);
+            line-height: 1.2;
         }
         
         .speed-value .unit {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 500;
             color: var(--text-muted);
-            margin-left: 4px;
+            margin-left: 3px;
         }
         
         .speed-value.download { color: var(--success); }
         .speed-value.upload { color: var(--accent); }
+        
+        .speed-chart {
+            height: 32px;
+            margin-top: 8px;
+            position: relative;
+        }
+        
+        .speed-total {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
         
         .mini-chart {
             height: 40px;
@@ -377,6 +392,45 @@
             margin-top: 16px;
             padding-top: 16px;
             border-top: 1px solid var(--border);
+        }
+        
+        .network-info-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+        
+        .network-info-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .network-info-btn {
+            width: 28px;
+            height: 28px;
+            border: none;
+            background: var(--bg);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        
+        .network-info-btn:hover {
+            background: #e8eaed;
+            color: var(--text-secondary);
+        }
+        
+        .network-info-btn.active {
+            color: var(--accent);
         }
         
         .info-row {
@@ -448,6 +502,29 @@
         
         .latency-bar.high { background: var(--warning); }
         .latency-bar.critical { background: var(--danger); }
+        
+        .latency-stats {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        
+        .latency-stat {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .latency-stat .stat-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
         
         .client-table {
             width: 100%;
@@ -1275,7 +1352,7 @@
             }
         }
         
-        function renderMiniChart(rxHistory, txHistory) {
+        function renderMiniChart(rxHistory, txHistory, isSpeedCard = false) {
             const rxMax = rxHistory.length > 0 ? Math.max(...rxHistory) : 1;
             const txMax = txHistory.length > 0 ? Math.max(...txHistory) : 1;
             const maxVal = Math.max(rxMax, txMax, 1);
@@ -1300,6 +1377,17 @@
                 }).join(' ');
             }
             
+            if (isSpeedCard) {
+                return `
+                    <div class="speed-chart">
+                        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;">
+                            ${rxPoints ? `<polyline fill="rgba(40, 167, 69, 0.15)" stroke="#28a745" stroke-width="2.5" points="${rxPoints} 100,0 100,100" />` : ''}
+                            ${rxPoints ? `<polyline fill="none" stroke="#28a745" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${rxPoints}" />` : ''}
+                        </svg>
+                    </div>
+                `;
+            }
+            
             return `
                 <div class="mini-chart">
                     <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;">
@@ -1312,16 +1400,20 @@
             `;
         }
         
-        function renderLatencyGrid(latencies) {
+        function renderLatencyGrid(latencies, wanName) {
             const latencyMap = {};
+            const historyMap = {};
             if (latencies) {
                 latencies.forEach(l => {
                     latencyMap[l.target] = l.latency;
+                    historyMap[l.target] = l.latencies || [];
                 });
             }
             
             const baiduLat = latencyMap['baidu'] !== undefined ? latencyMap['baidu'] : -1;
+            const baiduHistory = historyMap['baidu'] || [];
             const cfLat = latencyMap['cloudflare'] !== undefined ? latencyMap['cloudflare'] : -1;
+            const cfHistory = historyMap['cloudflare'] || [];
             
             const getLatencyClass = (lat) => {
                 if (lat < 0) return '';
@@ -1329,6 +1421,31 @@
                 if (lat < 100) return 'high';
                 return 'critical';
             };
+            
+            const renderBars = (history) => {
+                const bars = [];
+                for (let i = 0; i < 5; i++) {
+                    const idx = history.length - 5 + i;
+                    const lat = idx >= 0 ? history[idx] : -1;
+                    const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
+                    bars.push(`<div class="latency-bar ${getLatencyClass(lat)}" style="height: ${h}%;"></div>`);
+                }
+                return bars.join('');
+            };
+            
+            const calcStats = (history) => {
+                const valid = history.filter(l => l >= 0);
+                if (valid.length === 0) {
+                    return { min: '--', avg: '--', max: '--' };
+                }
+                const min = Math.min(...valid);
+                const max = Math.max(...valid);
+                const avg = Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
+                return { min, avg, max };
+            };
+            
+            const baiduStats = calcStats(baiduHistory);
+            const cfStats = calcStats(cfHistory);
             
             return `
                 <div class="latency-grid">
@@ -1338,10 +1455,12 @@
                             <span class="latency-value ${getLatencyClass(baiduLat)}">${baiduLat >= 0 ? baiduLat + ' ms' : '-- ms'}</span>
                         </div>
                         <div class="latency-bars">
-                            ${[baiduLat, baiduLat, baiduLat, baiduLat, baiduLat].map(lat => {
-                                const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
-                                return `<div class="latency-bar ${getLatencyClass(lat)}" style="height: ${h}%;"></div>`;
-                            }).join('')}
+                            ${renderBars(baiduHistory)}
+                        </div>
+                        <div class="latency-stats">
+                            <span class="latency-stat"><span class="stat-label">min</span> ${baiduStats.min}ms</span>
+                            <span class="latency-stat"><span class="stat-label">avg</span> ${baiduStats.avg}ms</span>
+                            <span class="latency-stat"><span class="stat-label">max</span> ${baiduStats.max}ms</span>
                         </div>
                     </div>
                     <div class="latency-item">
@@ -1350,173 +1469,220 @@
                             <span class="latency-value ${getLatencyClass(cfLat)}">${cfLat >= 0 ? cfLat + ' ms' : '-- ms'}</span>
                         </div>
                         <div class="latency-bars">
-                            ${[cfLat, cfLat, cfLat, cfLat, cfLat].map(lat => {
-                                const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
-                                return `<div class="latency-bar ${getLatencyClass(lat)}" style="height: ${h}%;"></div>`;
-                            }).join('')}
+                            ${renderBars(cfHistory)}
+                        </div>
+                        <div class="latency-stats">
+                            <span class="latency-stat"><span class="stat-label">min</span> ${cfStats.min}ms</span>
+                            <span class="latency-stat"><span class="stat-label">avg</span> ${cfStats.avg}ms</span>
+                            <span class="latency-stat"><span class="stat-label">max</span> ${cfStats.max}ms</span>
                         </div>
                     </div>
+                </div>
+                <div style="text-align: center; margin-top: 8px;">
+                    <button class="btn btn-secondary" onclick="refreshLatency('${wanName}')" style="font-size: 12px; padding: 4px 12px;">重新测试</button>
                 </div>
             `;
         }
         
-        async function loadWANStatus() {
+        async function refreshLatency(wanName) {
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '测试中...';
+            btn.disabled = true;
+            
             try {
-                const res = await fetch('/api/v1/wan');
-                const data = await res.json();
-                
-                const grid = document.getElementById('wanGrid');
-                
-                grid.innerHTML = data.map(wan => {
-                    const rxSpeed = formatSpeed(wan.rx_speed || 0);
-                    const txSpeed = formatSpeed(wan.tx_speed || 0);
-                    
-                    const displayName = (wan.name || 'WAN').toUpperCase();
-                    
-                    let ispHtml = '';
-                    if (wan.isp && wan.isp.isp) {
-                        const logo = getISPLogo(wan.isp.isp);
-                        const location = wan.isp.city 
-                            ? `${wan.isp.country || ''} ${wan.isp.region || ''} ${wan.isp.city || ''}` 
-                            : wan.isp.ip || '';
-                        ispHtml = `
-                            <div class="isp-badge">
-                                ${logo}
-                                <span>${wan.isp.isp}</span>
-                                <span style="color: var(--text-muted); font-size: 11px;">${location}</span>
-                            </div>
-                        `;
-                    }
-                    
-                    const chartHtml = renderMiniChart(wan.rx_history || [], wan.tx_history || []);
-                    const latencyGridHtml = renderLatencyGrid(wan.latencies || []);
-                    
-                    return `
-                        <div class="wan-card">
-                            <div class="wan-header">
-                                <div>
-                                    <div class="wan-name">${displayName}</div>
-                                    <div class="wan-label">${wan.interface}</div>
-                                </div>
-                                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
-                                    <span class="status-badge ${wan.connected ? 'online' : 'offline'}">
-                                        ${wan.connected ? '在线' : '离线'}
-                                    </span>
-                                    ${ispHtml}
-                                </div>
-                            </div>
-                            
-                            <div class="speed-grid">
-                                <div class="speed-box">
-                                    <div class="speed-label">下载</div>
-                                    <div class="speed-value download">
-                                        ${rxSpeed.value}<span class="unit">${rxSpeed.unit}</span>
-                                    </div>
-                                </div>
-                                <div class="speed-box">
-                                    <div class="speed-label">上传</div>
-                                    <div class="speed-value upload">
-                                        ${txSpeed.value}<span class="unit">${txSpeed.unit}</span>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            ${chartHtml}
-                            
-                            <div class="wan-stats">
-                                <div class="stat-item">
-                                    <div class="stat-label">累计下载</div>
-                                    <div class="stat-value">${formatBytes(wan.rx_bytes || 0)}</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">累计上传</div>
-                                    <div class="stat-value">${formatBytes(wan.tx_bytes || 0)}</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">延迟</div>
-                                    <div class="stat-value">${wan.latency >= 0 ? wan.latency + ' ms' : '-- ms'}</div>
-                                </div>
-                            </div>
-                            
-                            <div class="network-info">
-                                <div class="info-row">
-                                    <span class="info-label">IPv4</span>
-                                    <span class="info-value">${wan.ipv4 || '--'}</span>
-                                </div>
-                                <div class="info-row">
-                                    <span class="info-label">IPv6</span>
-                                    <span class="info-value">${wan.ipv6 || '--'}</span>
-                                </div>
-                                <div class="info-row">
-                                    <span class="info-label">DNS</span>
-                                    <span class="info-value">${wan.dns || '--'}</span>
-                                </div>
-                            </div>
-                            
-                            ${latencyGridHtml}
-                        </div>
-                    `;
-                }).join('');
+                await fetch('/api/v1/wan');
             } catch (e) {
-                console.error('Load WAN status failed:', e);
+                console.error('刷新延迟失败:', e);
             }
+            
+            btn.textContent = originalText;
+            btn.disabled = false;
         }
         
-        async function loadClients() {
+        function togglePrivacy(wanName, btn) {
+            btn.classList.toggle('active');
+            const isHidden = btn.classList.contains('active');
+            
+            const ipv4El = document.getElementById(`stat-ipv4-${wanName}`);
+            const ipv6El = document.getElementById(`stat-ipv6-${wanName}`);
+            const dnsEl = document.getElementById(`stat-dns-${wanName}`);
+            
+            const maskValue = (el) => {
+                const valueEl = el.querySelector('.stat-value');
+                const original = valueEl.getAttribute('data-original');
+                if (isHidden) {
+                    if (!original) {
+                        valueEl.setAttribute('data-original', valueEl.textContent);
+                        valueEl.textContent = '***.***.***.***';
+                    } else {
+                        valueEl.textContent = '***.***.***.***';
+                    }
+                } else {
+                    if (original) {
+                        valueEl.textContent = original;
+                    }
+                }
+            };
+            
+            if (ipv4El) maskValue(ipv4El);
+            if (ipv6El) maskValue(ipv6El);
+            if (dnsEl) maskValue(dnsEl);
+        }
+        
+        async function refreshISP(wanName) {
+            const btn = event.target;
+            btn.style.transform = 'rotate(180deg)';
+            
             try {
-                const res = await fetch('/api/v1/clients');
-                const data = await res.json();
+                await fetch('/api/v1/wan');
+            } catch (e) {
+                console.error('刷新 ISP 失败:', e);
+            }
+            
+            setTimeout(() => {
+                btn.style.transform = '';
+            }, 500);
+        }
+        
+        function loadWANStatus(data) {
+            const grid = document.getElementById('wanGrid');
+            
+            grid.innerHTML = data.map(wan => {
+                const rxSpeed = formatSpeed(wan.rx_speed || 0);
+                const txSpeed = formatSpeed(wan.tx_speed || 0);
                 
-                const tbody = document.getElementById('clientTable');
-                if (data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无在线客户端</td></tr>';
-                    return;
+                const displayName = (wan.name || 'WAN').toUpperCase();
+                
+                let ispHtml = '';
+                if (wan.isp && wan.isp.isp) {
+                    const logo = getISPLogo(wan.isp.isp);
+                    const location = wan.isp.city 
+                        ? `${wan.isp.country || ''} ${wan.isp.region || ''} ${wan.isp.city || ''}` 
+                        : wan.isp.ip || '';
+                    ispHtml = `
+                        <div class="isp-badge">
+                            ${logo}
+                            <span>${wan.isp.isp}</span>
+                            <span style="color: var(--text-muted); font-size: 11px;">${location}</span>
+                        </div>
+                    `;
                 }
                 
-                tbody.innerHTML = data.map(client => {
-                    const signal = client.signal || 0;
-                    const sClass = signalClass(signal);
-                    
-                    // 连接方式：有线客户端显示"有线"，WiFi 客户端显示频段
-                    let connBadge = '';
-                    if (client.conn_type === 'wired' || (!client.band && !client.ssid)) {
-                        connBadge = '<span class="band-badge band-wired">有线</span>';
-                    } else {
-                        const bandClass = client.band === '5G' ? 'band-5g' : 'band-24g';
-                        connBadge = `<span class="band-badge ${bandClass}">${client.band || 'WiFi'}</span>`;
-                    }
-                    
-                    // 有线客户端不显示信号强度
-                    let signalHtml = '';
-                    if (client.conn_type === 'wired' || (!client.band && !client.ssid)) {
-                        signalHtml = '<span style="color: var(--text-muted);">--</span>';
-                    } else {
-                        signalHtml = `
-                            <div class="signal-bar">
-                                <div class="signal-meter">
-                                    <div class="signal-bar-item ${sClass}"></div>
-                                    <div class="signal-bar-item ${sClass}"></div>
-                                    <div class="signal-bar-item ${sClass}"></div>
-                                    <div class="signal-bar-item ${sClass}"></div>
-                                </div>
-                                <span style="color: var(--text-muted);">${signal} dBm</span>
+                const latencyGridHtml = renderLatencyGrid(wan.latencies || [], wan.name);
+                
+                return `
+                    <div class="wan-card">
+                        <div class="wan-header">
+                            <div>
+                                <div class="wan-name">${displayName}</div>
+                                <div class="wan-label">${wan.interface}</div>
                             </div>
-                        `;
-                    }
-                    
-                    return `
-                        <tr>
-                            <td>${client.name || '-'}</td>
-                            <td>${client.ip || '-'}</td>
-                            <td style="font-family: monospace; color: var(--text-muted);">${client.mac || '-'}</td>
-                            <td>${connBadge}</td>
-                            <td>${signalHtml}</td>
-                        </tr>
-                    `;
-                }).join('');
-            } catch (e) {
-                console.error('Load clients failed:', e);
+                            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+                                <span class="status-badge ${wan.connected ? 'online' : 'offline'}">
+                                    ${wan.connected ? '在线' : '离线'}
+                                </span>
+                                ${ispHtml}
+                            </div>
+                        </div>
+                        
+                        <div class="speed-grid">
+                            <div class="speed-box">
+                                <div class="speed-label">下载</div>
+                                <div class="speed-value download">
+                                    ${rxSpeed.value}<span class="unit">${rxSpeed.unit}</span>
+                                </div>
+                                ${renderMiniChart(wan.rx_history || [], [], true)}
+                                <div class="speed-total">总计 ${formatBytes(wan.rx_bytes || 0)}</div>
+                            </div>
+                            <div class="speed-box">
+                                <div class="speed-label">上传</div>
+                                <div class="speed-value upload">
+                                    ${txSpeed.value}<span class="unit">${txSpeed.unit}</span>
+                                </div>
+                                ${renderMiniChart([], wan.tx_history || [], true)}
+                                <div class="speed-total">总计 ${formatBytes(wan.tx_bytes || 0)}</div>
+                            </div>
+                        </div>
+                        
+                        <div class="network-info">
+                            <div class="network-info-header">
+                                <span>网络信息</span>
+                                <div class="network-info-actions">
+                                    <button class="network-info-btn" onclick="togglePrivacy('${wan.name}', this)" title="隐藏敏感信息">👁</button>
+                                    <button class="network-info-btn" onclick="refreshISP('${wan.name}')" title="重新检测">↻</button>
+                                </div>
+                            </div>
+                            <div class="wan-stats">
+                                <div class="stat-item" id="stat-ipv4-${wan.name}">
+                                    <div class="stat-label">IPv4</div>
+                                    <div class="stat-value">${wan.ipv4 || '--'}</div>
+                                </div>
+                                <div class="stat-item" id="stat-ipv6-${wan.name}">
+                                    <div class="stat-label">IPv6</div>
+                                    <div class="stat-value">${wan.ipv6 || '--'}</div>
+                                </div>
+                                <div class="stat-item" id="stat-dns-${wan.name}">
+                                    <div class="stat-label">DNS</div>
+                                    <div class="stat-value">${wan.dns || '--'}</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        ${latencyGridHtml}
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function loadClients(data) {
+            const tbody = document.getElementById('clientTable');
+            if (!data || data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无在线客户端</td></tr>';
+                return;
             }
+            
+            tbody.innerHTML = data.map(client => {
+                const signal = client.signal || 0;
+                const sClass = signalClass(signal);
+                
+                // 连接方式：有线客户端显示"有线"，WiFi 客户端显示频段
+                let connBadge = '';
+                if (client.conn_type === 'wired' || (!client.band && !client.ssid)) {
+                    connBadge = '<span class="band-badge band-wired">有线</span>';
+                } else {
+                    const bandClass = client.band === '5G' ? 'band-5g' : 'band-24g';
+                    connBadge = `<span class="band-badge ${bandClass}">${client.band || 'WiFi'}</span>`;
+                }
+                
+                // 有线客户端不显示信号强度
+                let signalHtml = '';
+                if (client.conn_type === 'wired' || (!client.band && !client.ssid)) {
+                    signalHtml = '<span style="color: var(--text-muted);">--</span>';
+                } else {
+                    signalHtml = `
+                        <div class="signal-bar">
+                            <div class="signal-meter">
+                                <div class="signal-bar-item ${sClass}"></div>
+                                <div class="signal-bar-item ${sClass}"></div>
+                                <div class="signal-bar-item ${sClass}"></div>
+                                <div class="signal-bar-item ${sClass}"></div>
+                            </div>
+                            <span style="color: var(--text-muted);">${signal} dBm</span>
+                        </div>
+                    `;
+                }
+                
+                return `
+                    <tr>
+                        <td>${client.name || '-'}</td>
+                        <td>${client.ip || '-'}</td>
+                        <td style="font-family: monospace; color: var(--text-muted);">${client.mac || '-'}</td>
+                        <td>${connBadge}</td>
+                        <td>${signalHtml}</td>
+                    </tr>
+                `;
+            }).join('');
         }
         
         let currentSubTab = 'ip';
@@ -1879,14 +2045,52 @@
             }, 3000);
         }
         
-        async function init() {
-            await Promise.all([loadVersion(), loadWANStatus(), loadClients(), loadRouting()]);
+        function connectSSE() {
+            const eventSource = new EventSource('/api/v1/events');
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'update') {
+                        loadWANStatus(data.wans || []);
+                        loadClients(data.clients || []);
+                    }
+                } catch (e) {
+                    console.error('SSE parse error:', e);
+                }
+            };
+            
+            eventSource.onerror = function() {
+                console.warn('SSE connection error, reconnecting...');
+                eventSource.close();
+                setTimeout(connectSSE, 5000);
+            };
+            
+            return eventSource;
         }
         
-        setInterval(async () => {
-            await loadWANStatus();
-            await loadClients();
-        }, 3000);
+        async function init() {
+            await loadVersion();
+            await loadRouting();
+            
+            try {
+                const res = await fetch('/api/v1/wan');
+                const wans = await res.json();
+                loadWANStatus(wans);
+            } catch (e) {
+                console.error('Initial WAN load failed:', e);
+            }
+            
+            try {
+                const res = await fetch('/api/v1/clients');
+                const clients = await res.json();
+                loadClients(clients);
+            } catch (e) {
+                console.error('Initial clients load failed:', e);
+            }
+            
+            connectSSE();
+        }
         
         init();
     </script>

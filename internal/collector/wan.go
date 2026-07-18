@@ -14,8 +14,9 @@ import (
 
 // LatencyResult 延迟测试结果
 type LatencyResult struct {
-	Target   string `json:"target"`
-	Latency  int    `json:"latency"`
+	Target    string `json:"target"`
+	Latency   int    `json:"latency"`
+	Latencies []int  `json:"latencies"`
 }
 
 // WANStats WAN 口统计数据
@@ -40,15 +41,17 @@ type WANStats struct {
 
 // WANCollector WAN 采集器
 type WANCollector struct {
-	wanConfigs   []config.WANConfig
-	interval     time.Duration
-	mu           sync.RWMutex
-	stats        []WANStats
-	prevData     map[string]wanPrevData
-	ispDetector  *isp.Detector
-	rxHistory    map[string][]float64
-	txHistory    map[string][]float64
-	historySize  int
+	wanConfigs      []config.WANConfig
+	interval        time.Duration
+	mu              sync.RWMutex
+	stats           []WANStats
+	prevData        map[string]wanPrevData
+	ispDetector     *isp.Detector
+	rxHistory       map[string][]float64
+	txHistory       map[string][]float64
+	latencyHistory  map[string]map[string][]int
+	historySize     int
+	latencyHistorySize int
 }
 
 type wanPrevData struct {
@@ -60,13 +63,15 @@ type wanPrevData struct {
 // NewWANCollector 创建 WAN 采集器
 func NewWANCollector(wans []config.WANConfig, interval int) *WANCollector {
 	return &WANCollector{
-		wanConfigs:  wans,
-		interval:    time.Duration(interval) * time.Second,
-		prevData:    make(map[string]wanPrevData),
-		ispDetector: isp.NewDetector(),
-		rxHistory:   make(map[string][]float64),
-		txHistory:   make(map[string][]float64),
-		historySize: 20,
+		wanConfigs:         wans,
+		interval:           time.Duration(interval) * time.Second,
+		prevData:           make(map[string]wanPrevData),
+		ispDetector:        isp.NewDetector(),
+		rxHistory:          make(map[string][]float64),
+		txHistory:          make(map[string][]float64),
+		latencyHistory:     make(map[string]map[string][]int),
+		historySize:        20,
+		latencyHistorySize: 5,
 	}
 }
 
@@ -149,7 +154,7 @@ func (w *WANCollector) collect() {
 			
 			if s.Connected {
 				s.ISP = w.ispDetector.Detect(wc.Interface)
-				s.Latencies = pingMultiple([]string{"114.114.114.114", "www.baidu.com", "1.1.1.1"}, wc.Interface)
+				s.Latencies = w.pingWithHistory([]string{"114.114.114.114", "www.baidu.com", "1.1.1.1"}, wc.Interface)
 				if len(s.Latencies) > 0 && s.Latencies[0].Latency >= 0 {
 					s.Latency = s.Latencies[0].Latency
 				} else {
@@ -324,7 +329,53 @@ func pingLatency(target, iface string) int {
 	return -1
 }
 
-// pingMultiple 并行测试多个目标的延迟，iface 指定绑定接口
+// pingWithHistory 并行测试多个目标的延迟，保存最近5次历史记录
+func (w *WANCollector) pingWithHistory(targets []string, iface string) []LatencyResult {
+	type result struct {
+		target  string
+		latency int
+	}
+	
+	ch := make(chan result, len(targets))
+	
+	for _, t := range targets {
+		go func(target string) {
+			ch <- result{target: target, latency: pingLatency(target, iface)}
+		}(t)
+	}
+	
+	var results []LatencyResult
+	for i := 0; i < len(targets); i++ {
+		r := <-ch
+		name := r.target
+		if name == "www.baidu.com" {
+			name = "baidu"
+		} else if name == "1.1.1.1" {
+			name = "cloudflare"
+		} else if name == "114.114.114" {
+			name = "default"
+		}
+		
+		if w.latencyHistory[iface] == nil {
+			w.latencyHistory[iface] = make(map[string][]int)
+		}
+		
+		w.latencyHistory[iface][name] = append(w.latencyHistory[iface][name], r.latency)
+		if len(w.latencyHistory[iface][name]) > w.latencyHistorySize {
+			w.latencyHistory[iface][name] = w.latencyHistory[iface][name][1:]
+		}
+		
+		results = append(results, LatencyResult{
+			Target:    name,
+			Latency:   r.latency,
+			Latencies: w.latencyHistory[iface][name],
+		})
+	}
+	
+	return results
+}
+
+// pingMultiple 并行测试多个目标的延迟，iface 指定绑定接口（无历史记录版本）
 func pingMultiple(targets []string, iface string) []LatencyResult {
 	type result struct {
 		target  string
@@ -347,7 +398,7 @@ func pingMultiple(targets []string, iface string) []LatencyResult {
 			name = "baidu"
 		} else if name == "1.1.1.1" {
 			name = "cloudflare"
-		} else if name == "114.114.114.114" {
+		} else if name == "114.114.114" {
 			name = "default"
 		}
 		results = append(results, LatencyResult{Target: name, Latency: r.latency})

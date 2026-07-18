@@ -1,17 +1,12 @@
 package isp
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net"
-	"net/http"
 	"os/exec"
 	"strings"
 	"sync"
-	"time"
 )
 
 // Info 运营商信息
@@ -45,11 +40,7 @@ func (d *Detector) Detect(iface string) *Info {
 	}
 	d.mu.RUnlock()
 
-	// 获取接口 IP，创建绑定到该接口的 HTTP client
-	localIP := getInterfaceIPv4(iface)
-	client := newHTTPClient(localIP)
-
-	info := d.queryAll(iface, client)
+	info := d.queryAll(iface)
 
 	d.mu.Lock()
 	d.cache[iface] = info
@@ -58,31 +49,36 @@ func (d *Detector) Detect(iface string) *Info {
 	return info
 }
 
-// queryAll 并行查询多个服务
-func (d *Detector) queryAll(iface string, client *http.Client) *Info {
+// queryAll 并行查询多个国内服务
+func (d *Detector) queryAll(iface string) *Info {
 	type result struct {
 		info *Info
 		err  error
 	}
 
-	ch := make(chan result, 3)
+	ch := make(chan result, 4)
 
 	go func() {
-		info, err := d.queryIPIP(client)
+		info, err := d.queryIPIP(iface)
 		ch <- result{info, err}
 	}()
 
 	go func() {
-		info, err := d.queryIPSB(client)
+		info, err := d.queryIPW(iface)
 		ch <- result{info, err}
 	}()
 
 	go func() {
-		info, err := d.queryIPW(client)
+		info, err := d.queryIPCN(iface)
 		ch <- result{info, err}
 	}()
 
-	for i := 0; i < 3; i++ {
+	go func() {
+		info, err := d.queryIPAPI(iface)
+		ch <- result{info, err}
+	}()
+
+	for i := 0; i < 4; i++ {
 		r := <-ch
 		if r.err == nil && r.info != nil {
 			return r.info
@@ -96,15 +92,10 @@ func (d *Detector) queryAll(iface string, client *http.Client) *Info {
 	}
 }
 
-// queryIPIP 查询 ipip.net
-func (d *Detector) queryIPIP(client *http.Client) (*Info, error) {
-	resp, err := client.Get("https://myip.ipip.net/json")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+// queryIPIP 查询 ipip.net（国内平台）
+func (d *Detector) queryIPIP(iface string) (*Info, error) {
+	cmd := exec.Command("curl", "-s", "--connect-timeout", "5", "--interface", iface, "https://myip.ipip.net/json")
+	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +104,7 @@ func (d *Detector) queryIPIP(client *http.Client) (*Info, error) {
 		Ret  string   `json:"ret"`
 		Data []string `json:"data"`
 	}
-	if err := json.Unmarshal(body, &data); err != nil {
+	if err := json.Unmarshal(output, &data); err != nil {
 		return nil, err
 	}
 
@@ -130,48 +121,10 @@ func (d *Detector) queryIPIP(client *http.Client) (*Info, error) {
 	}, nil
 }
 
-// queryIPSB 查询 ip.sb
-func (d *Detector) queryIPSB(client *http.Client) (*Info, error) {
-	resp, err := client.Get("https://api.ip.sb/geoip")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var data struct {
-		IP      string `json:"ip"`
-		Country string `json:"country"`
-		Region  string `json:"region"`
-		City    string `json:"city"`
-		ISP     string `json:"isp"`
-	}
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, err
-	}
-
-	return &Info{
-		IP:      data.IP,
-		Country: data.Country,
-		Region:  data.Region,
-		City:    data.City,
-		ISP:     detectISP(data.ISP),
-	}, nil
-}
-
-// queryIPW 查询 ipw.cn
-func (d *Detector) queryIPW(client *http.Client) (*Info, error) {
-	resp, err := client.Get("https://ipw.cn/api/ip/myip?json")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+// queryIPW 查询 ipw.cn（国内平台）
+func (d *Detector) queryIPW(iface string) (*Info, error) {
+	cmd := exec.Command("curl", "-s", "--connect-timeout", "5", "--interface", iface, "https://ipw.cn/api/ip/myip?json")
+	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
@@ -180,13 +133,71 @@ func (d *Detector) queryIPW(client *http.Client) (*Info, error) {
 		IP  string `json:"ip"`
 		ISP string `json:"isp"`
 	}
-	if err := json.Unmarshal(body, &data); err != nil {
+	if err := json.Unmarshal(output, &data); err != nil {
 		return nil, err
+	}
+
+	if data.IP == "" {
+		return nil, fmt.Errorf("ipw: empty ip")
 	}
 
 	return &Info{
 		IP:  data.IP,
 		ISP: detectISP(data.ISP),
+	}, nil
+}
+
+// queryIPCN 查询 ip.cn（国内平台）
+func (d *Detector) queryIPCN(iface string) (*Info, error) {
+	cmd := exec.Command("curl", "-s", "--connect-timeout", "5", "--interface", iface, "https://ip.cn/api/index?ip=&type=0")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var data struct {
+		Code int    `json:"code"`
+		Data struct {
+			IP      string `json:"ip"`
+			Country string `json:"country"`
+			Region  string `json:"region"`
+			City    string `json:"city"`
+			Isp     string `json:"isp"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, err
+	}
+
+	if data.Code != 0 || data.Data.IP == "" {
+		return nil, fmt.Errorf("ipcn: invalid response")
+	}
+
+	return &Info{
+		IP:      data.Data.IP,
+		Country: data.Data.Country,
+		Region:  data.Data.Region,
+		City:    data.Data.City,
+		ISP:     detectISP(data.Data.Isp),
+	}, nil
+}
+
+// queryIPAPI 查询 api.ipify.org（返回IP，再结合其他方式）
+func (d *Detector) queryIPAPI(iface string) (*Info, error) {
+	cmd := exec.Command("curl", "-s", "--connect-timeout", "5", "--interface", iface, "https://api.ipify.org")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	ip := strings.TrimSpace(string(output))
+	if ip == "" {
+		return nil, fmt.Errorf("ipify: empty ip")
+	}
+
+	return &Info{
+		IP:  ip,
+		ISP: "未知",
 	}, nil
 }
 
@@ -205,53 +216,16 @@ func detectISP(s string) string {
 	if strings.Contains(s, "cernet") || strings.Contains(s, "教育") {
 		return "教育网"
 	}
+	if strings.Contains(s, "broadcast") || strings.Contains(s, "广电") {
+		return "广电"
+	}
+	if strings.Contains(s, "railway") || strings.Contains(s, "铁通") {
+		return "铁通"
+	}
 	if s != "" {
 		return s
 	}
 	return "未知"
-}
-
-// newHTTPClient 创建 HTTP client，如果 localIP 不为空则绑定到该本地地址
-func newHTTPClient(localIP string) *http.Client {
-	transport := &http.Transport{}
-
-	if localIP != "" {
-		localAddr := &net.TCPAddr{IP: net.ParseIP(localIP)}
-		dialer := &net.Dialer{
-			LocalAddr: localAddr,
-			Timeout:   5 * time.Second,
-		}
-		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, addr)
-		}
-	}
-
-	return &http.Client{
-		Transport: transport,
-		Timeout:   10 * time.Second,
-	}
-}
-
-// getInterfaceIPv4 获取指定网络接口的 IPv4 地址
-func getInterfaceIPv4(iface string) string {
-	cmd := exec.Command("ip", "addr", "show", iface)
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "inet ") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				return strings.Split(parts[1], "/")[0]
-			}
-		}
-	}
-
-	return ""
 }
 
 // ClearCache 清除缓存
