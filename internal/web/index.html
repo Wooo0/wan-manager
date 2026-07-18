@@ -798,6 +798,11 @@
             color: var(--success);
         }
         
+        .rule-type-badge.game {
+            background: rgba(156, 39, 176, 0.12);
+            color: #9c27b0;
+        }
+        
         .modal-overlay {
             position: fixed;
             top: 0;
@@ -1214,8 +1219,7 @@
                 </div>
             </div>
         </div>
-    </div>
-    
+
     <div id="ruleModal" class="modal-overlay" style="display: none;">
         <div class="modal">
             <div class="modal-header">
@@ -1241,6 +1245,7 @@
                         <option value="custom">自定义 IP</option>
                         <option value="isp">运营商</option>
                         <option value="app">应用识别</option>
+                        <option value="game">游戏 IP 库</option>
                     </select>
                 </div>
                 <div class="form-group" id="ipGroup">
@@ -1255,6 +1260,15 @@
                     </div>
                     <div style="height: 8px;"></div>
                     <div class="app-selector" id="appSelector"></div>
+                </div>
+                <div class="form-group" id="gameGroup" style="display: none;">
+                    <label class="form-label">游戏规则（.rules 文件）</label>
+                    <select class="form-select" id="ruleGame">
+                        <option value="">加载中...</option>
+                    </select>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                        将 <code>rules/game/</code> 目录下的 .rules 文件分配给出口 WAN（库详情见各文件头部）。
+                    </div>
                 </div>
                 <div class="form-group">
                     <div class="form-check">
@@ -1748,8 +1762,11 @@
             const type = document.getElementById('ruleType').value;
             document.getElementById('ipGroup').style.display = (type === 'custom' || type === 'isp') ? 'block' : 'none';
             document.getElementById('appGroup').style.display = type === 'app' ? 'block' : 'none';
+            document.getElementById('gameGroup').style.display = type === 'game' ? 'block' : 'none';
             if (type === 'app') {
                 initAppSelector();
+            } else if (type === 'game') {
+                loadGameLibrary();
             }
         }
         
@@ -1835,9 +1852,15 @@
                                     <tr>
                                         <td>${rule.name || '-'}</td>
                                         <td><span class="rule-wan">${rule.wan || '-'}</span></td>
-                                        <td><span class="rule-type-badge ${rule.type || 'custom'}">${rule.type === 'isp' ? '运营商' : '自定义'}</span></td>
+                                        <td><span class="rule-type-badge ${rule.type || 'custom'}">${
+                                            rule.type === 'isp' ? '运营商' :
+                                            rule.type === 'app' ? '应用' :
+                                            rule.type === 'game' ? '游戏' : '自定义'
+                                        }</span></td>
                                         <td style="font-family: monospace; color: var(--text-muted); font-size: 12px;">
-                                            ${rule.ips ? rule.ips.length + ' 个' : '0'}
+                                            ${rule.type === 'game'
+                                                ? '游戏 IP 库（' + (rule.game || rule.name) + '.rules）'
+                                                : (rule.ips ? rule.ips.length + ' 个' : '0')}
                                         </td>
                                         <td>${rule.enabled ? '已启用' : '已禁用'}</td>
                                         <td>
@@ -1951,6 +1974,9 @@
                     document.getElementById('ruleIPs').value = rule.ips ? rule.ips.join('\n') : '';
                     document.getElementById('ruleEnabled').checked = rule.enabled;
                     selectedApps = rule.apps || [];
+                    if (rule.type === 'game') {
+                        loadGameLibrary(rule.game || rule.name);
+                    }
                     onRuleTypeChange();
                     document.getElementById('ruleModal').style.display = 'flex';
                 }
@@ -1981,8 +2007,9 @@
                 name: document.getElementById('ruleName').value,
                 wan: document.getElementById('ruleWAN').value,
                 type: type,
-                ips: type === 'app' ? [] : document.getElementById('ruleIPs').value.split('\n').map(s => s.trim()).filter(s => s),
+                ips: (type === 'app' || type === 'game') ? [] : document.getElementById('ruleIPs').value.split('\n').map(s => s.trim()).filter(s => s),
                 apps: type === 'app' ? selectedApps : [],
+                game: type === 'game' ? document.getElementById('ruleGame').value : '',
                 enabled: document.getElementById('ruleEnabled').checked
             };
             
@@ -2009,6 +2036,32 @@
             });
         }
         
+        let _gameLib = [];
+
+        // 只读加载游戏规则库（rules/game 下的 .rules 文件），供规则弹窗下拉选择。
+        // selectValue 可选：加载完成后把下拉框选中到指定 key。
+        async function loadGameLibrary(selectValue) {
+            try {
+                const res = await fetch('/api/v1/game-library');
+                const data = await res.json();
+                _gameLib = data.games || [];
+                const sel = document.getElementById('ruleGame');
+                if (_gameLib.length === 0) {
+                    sel.innerHTML = '<option value="">无可用 .rules 文件</option>';
+                } else {
+                    sel.innerHTML = _gameLib.map(g => {
+                        const title = g.subtitle || g.title || g.name;
+                        const cnt = g.cidr_count != null ? `（${g.cidr_count} CIDR）` : '';
+                        const warn = (g.warnings && g.warnings.length) ? ' ⚠' : '';
+                        return `<option value="${g.name}">${title} ${cnt}${warn}</option>`;
+                    }).join('');
+                }
+                if (selectValue) sel.value = selectValue;
+            } catch (e) {
+                console.error('loadGameLibrary failed:', e);
+            }
+        }
+
         function showToast(message, type) {
             const toast = document.createElement('div');
             toast.className = `toast toast-${type}`;
@@ -2047,6 +2100,7 @@
         async function init() {
             await loadVersion();
             await loadRouting();
+            loadGameLibrary(); // 预载游戏规则库，供添加/编辑弹窗下拉使用
             
             try {
                 const res = await fetch('/api/v1/wan');

@@ -47,8 +47,12 @@ jobs:
 
       - name: 打包发布文件
         run: |
+          mkdir -p dist/data/isp
+          cp internal/rules/ispdata/data/*.txt dist/data/isp/
+          mkdir -p dist/rules/game
+          cp rules/game/*.rules dist/rules/game/ 2>/dev/null || true
           cd dist
-          tar -czf wan-manager-linux-arm64.tar.gz wan-manager
+          tar -czf wan-manager-linux-arm64.tar.gz wan-manager data rules
           cd ..
           cp deploy/config.toml.example dist/
           cp scripts/install.sh dist/

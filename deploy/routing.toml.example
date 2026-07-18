@@ -9,36 +9,27 @@ default_wan = "wan1"
 
 # 运营商 IP 库（第二优先级）
 [isp]
-# 电信 IP 段
+# 是否启用运营商分流（按目的 IP 所属运营商选路）
+enabled = true
+# 启动时自动检测各 WAN 的运营商并映射（true）；检测失败或为特定 WAN 指定运营商时用 wan_mapping 手动覆盖
+auto_detect = true
+# 手动指定 WAN 名 -> 运营商（telecom/unicom/mobile），覆盖自动检测
+# wan_mapping = { wan1 = "telecom", wan2 = "unicom" }
+
+# 以下列表由程序启动时自动从公开源（metowolf/iplist）加载并合并，无需手动填写；
+# 如需追加自定义 IP 段，在此添加即可（会去重合并）。
 telecom = [
     # "1.0.1.0/24",
-    # "1.0.2.0/23",
 ]
-
-# 联通 IP 段
 unicom = [
     # "1.0.8.0/21",
-    # "1.0.32.0/19",
 ]
-
-# 移动 IP 段
 mobile = [
     # "1.0.64.0/18",
 ]
 
 # 自定义分流规则（第一优先级，未来 nDPI 应用分流也用这个）
-[[rules]]
-name = "游戏分流"
-enabled = false
-wan = "wan1"
-# 规则类型：custom（手动 IP）、isp（运营商）、app（应用识别，待实现）
-type = "custom"
-# IP 列表或 CIDR
-ips = [
-    # "1.2.3.4/32",
-    # "5.6.7.0/24",
-]
-
+# 规则类型 type：custom（手动 IP/CIDR）、isp（运营商）、app（应用识别）、game（游戏 IP 库）
 [[rules]]
 name = "视频分流"
 enabled = false
@@ -47,3 +38,17 @@ type = "custom"
 ips = [
     # "10.0.0.0/8",
 ]
+
+# 游戏 IP 库分流（基于 SSTap-Rule 风格的 .rules 文件）。
+# 把 .rules 文件放入游戏规则目录（默认 rules/game，见下方 game_rules_dir），
+# 这里登记「游戏主键 -> 出口 WAN」即可。未登记的 .rules 不会生效。
+# 游戏主键 = .rules 文件名去掉后缀（如 GenshinImpact.exe_SSTAP.rules -> GenshinImpact.exe_SSTAP）。
+[[rules]]
+name = "原神"
+enabled = true
+wan = "wan2"
+type = "game"
+game = "GenshinImpact.exe_SSTAP"   # 对应 rules/game/GenshinImpact.exe_SSTAP.rules
+
+game_rules_dir = "rules/game"
+

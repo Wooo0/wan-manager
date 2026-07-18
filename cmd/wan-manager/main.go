@@ -16,6 +16,8 @@ import (
 	"github.com/Wooo0/wan-manager/internal/collector"
 	"github.com/Wooo0/wan-manager/internal/config"
 	"github.com/Wooo0/wan-manager/internal/dpi"
+	"github.com/Wooo0/wan-manager/internal/isp"
+	ispdata "github.com/Wooo0/wan-manager/internal/rules/ispdata"
 	"github.com/Wooo0/wan-manager/internal/routing"
 )
 
@@ -81,6 +83,17 @@ func main() {
 	}
 	log.Printf("策略路由: enabled=%v, default_wan=%s, rules=%d", routingCfg.Enabled, routingCfg.DefaultWAN, len(routingCfg.Rules))
 
+	// 加载运营商 IP 段（远程最新优先，失败回退内置快照），合并到配置
+	ispData, ispErrs := ispdata.LoadDefaults()
+	for _, e := range ispErrs {
+		log.Printf("运营商 IP 段加载警告: %v", e)
+	}
+	mergeISPData(routingCfg, ispData)
+	if routingCfg.ISP.Enabled {
+		log.Printf("运营商 IP 段: 电信 %d / 联通 %d / 移动 %d 条",
+			len(routingCfg.ISP.Telecom), len(routingCfg.ISP.Unicom), len(routingCfg.ISP.Mobile))
+	}
+
 	// 初始化采集器
 	wanCollector := collector.NewWANCollector(cfg.WAN, cfg.Collector.Interval)
 	wanCollector.Start()
@@ -95,9 +108,36 @@ func main() {
 	}
 	routingManager := routing.NewManager(routingCfg, wanNames)
 
-	// 初始化 DPI 检测器（开发环境使用 mock，生产环境替换为真实 nDPI）
-	dpiDetector := dpi.NewMockDetector()
+	// 解析游戏 .rules 目录：配置留空则用默认 rules/game（相对二进制），
+	// 解析为绝对路径后交给管理器，避免相对工作目录的歧义。
+	gameDir := routingCfg.GameRulesDir
+	if gameDir == "" {
+		gameDir = "rules/game"
+	}
+	gameDir = resolveDir(gameDir)
+	routingManager.SetGameRulesDir(gameDir)
+	log.Printf("游戏规则目录: %s", gameDir)
+
+	// 启动识别一次：检测各 WAN 的运营商并建立 运营商->WAN 映射（不写死）
+	ispDetector := isp.NewDetector()
+	opWAN := detectISPWANMapping(cfg.WAN, routingCfg.ISP, ispDetector)
+	routingManager.SetISPOperatorMap(opWAN)
+
+	// 初始化 DPI 检测器：按配置选择系统级真实检测或 mock
+	var dpiDetector dpi.Detector
+	if cfg.DPI.Mode == "mock" {
+		log.Printf("DPI: 使用 mock 检测器（非真实流量）")
+		dpiDetector = dpi.NewMockDetector()
+	} else {
+		log.Printf("DPI: 使用系统级检测器（conntrack + %s 域名关联）", cfg.DPI.DNS.Source)
+		dpiDetector = dpi.NewSystemDetector(cfg.DPI)
+	}
 	routingManager.SetDPIDetector(dpiDetector)
+
+	// 启动 DPI 检测器（独立于策略路由开关，便于前端展示真实流）
+	if err := dpiDetector.Start(); err != nil {
+		log.Printf("DPI 检测器启动失败: %v", err)
+	}
 
 	if routingCfg.Enabled {
 		if err := routingManager.Start(); err != nil {
@@ -134,6 +174,11 @@ func main() {
 		log.Printf("HTTP 服务关闭出错: %v", err)
 	}
 
+	// 停止 DPI 检测器
+	if dpiDetector != nil {
+		dpiDetector.Stop()
+	}
+
 	// 停止策略路由
 	if routingCfg.Enabled {
 		routingManager.Stop()
@@ -154,4 +199,68 @@ func validateWANConfig(cfg *config.Config) error {
 		}
 	}
 	return nil
+}
+
+// mergeISPData 将加载到的运营商 IP 段合并进配置，保留用户在 [isp] 内联的自定义段（去重）。
+func mergeISPData(cfg *routing.RoutingConfig, loaded map[string][]string) {
+	mergeInto(&cfg.ISP.Telecom, loaded[ispdata.Telecom])
+	mergeInto(&cfg.ISP.Unicom, loaded[ispdata.Unicom])
+	mergeInto(&cfg.ISP.Mobile, loaded[ispdata.Mobile])
+}
+
+func mergeInto(dst *[]string, src []string) {
+	seen := make(map[string]struct{}, len(*dst))
+	for _, s := range *dst {
+		seen[s] = struct{}{}
+	}
+	for _, s := range src {
+		if _, ok := seen[s]; !ok {
+			*dst = append(*dst, s)
+			seen[s] = struct{}{}
+		}
+	}
+}
+
+// detectISPWANMapping 建立 运营商 -> WAN 名称 映射：
+// 优先使用配置 wan_mapping 手动指定；否则（且 auto_detect=true）启动检测一次各 WAN 的运营商。
+// 同一运营商命中多个 WAN 时取首个。
+func detectISPWANMapping(wans []config.WANConfig, ispCfg routing.ISPConfig, det *isp.Detector) map[string]string {
+	opWAN := map[string]string{}
+	for _, w := range wans {
+		op := ""
+		if m, ok := ispCfg.WANMapping[w.Name]; ok {
+			op = ispdata.NormalizeOperator(m)
+		}
+		if op == "" && ispCfg.AutoDetect {
+			if info := det.Detect(w.Interface); info != nil {
+				op = ispdata.NormalizeOperator(info.ISP)
+			}
+		}
+		if op == "" {
+			log.Printf("WAN %s (%s): 未识别到运营商，运营商分流将不包含此口", w.Name, w.Interface)
+			continue
+		}
+		if _, exists := opWAN[op]; !exists {
+			opWAN[op] = w.Name
+		} else {
+			log.Printf("运营商 %s 命中多个 WAN（%s, %s），使用首个 %s", op, opWAN[op], w.Name, opWAN[op])
+		}
+	}
+	return opWAN
+}
+
+// resolveDir 将配置里的目录解析为绝对路径：已是绝对路径则直接用；
+// 否则相对二进制所在目录解析（使 rules/game 等相对路径在任意工作目录下都稳定）。
+func resolveDir(p string) string {
+	if p == "" {
+		return p
+	}
+	if filepath.IsAbs(p) {
+		return p
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return p
+	}
+	return filepath.Join(filepath.Dir(exe), p)
 }

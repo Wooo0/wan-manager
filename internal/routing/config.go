@@ -9,20 +9,24 @@ import (
 
 // RoutingConfig 策略路由配置
 type RoutingConfig struct {
-	Enabled        bool       `toml:"enabled"`
-	DefaultWAN     string     `toml:"default_wan"`
-	BalanceMode    string     `toml:"balance_mode"`
-	BalanceRatio   string     `toml:"balance_ratio"`
-	ISP            ISPConfig  `toml:"isp"`
-	Rules          []Rule     `toml:"rules"`
-	MWAN3Config    *MWAN3Config `json:"mwan3_config,omitempty"`
+	Enabled        bool           `toml:"enabled"`
+	DefaultWAN     string         `toml:"default_wan"`
+	BalanceMode    string         `toml:"balance_mode"`
+	BalanceRatio   string         `toml:"balance_ratio"`
+	ISP            ISPConfig      `toml:"isp"`
+	Rules          []Rule         `toml:"rules"`
+	GameRulesDir   string         `toml:"game_rules_dir"` // 游戏 .rules 目录；为空时默认 rules/game（相对于二进制）
+	MWAN3Config    *MWAN3Config  `json:"mwan3_config,omitempty"`
 }
 
-// ISPConfig 运营商 IP 配置
+// ISPConfig 运营商分流配置
 type ISPConfig struct {
-	Telecom []string `toml:"telecom"` // 电信 IP 段
-	Unicom  []string `toml:"unicom"`  // 联通 IP 段
-	Mobile  []string `toml:"mobile"`  // 移动 IP 段
+	Enabled    bool              `toml:"enabled"`     // 是否启用运营商分流（按目的 IP 所属运营商选路）
+	AutoDetect bool              `toml:"auto_detect"` // 启动时检测各 WAN 的运营商并自动映射（默认 true）
+	WANMapping  map[string]string `toml:"wan_mapping"` // 手动指定 WAN 名 -> 运营商(telecom/unicom/mobile)，覆盖/补充自动检测
+	Telecom     []string          `toml:"telecom"`     // 电信 IP 段（可空，由加载器从公开源自动填充）
+	Unicom      []string          `toml:"unicom"`      // 联通 IP 段
+	Mobile      []string          `toml:"mobile"`      // 移动 IP 段
 }
 
 // Rule 分流规则
@@ -30,9 +34,10 @@ type Rule struct {
 	Name    string   `toml:"name" json:"name"`
 	Enabled bool     `toml:"enabled" json:"enabled"`
 	WAN     string   `toml:"wan" json:"wan"`
-	Type    string   `toml:"type" json:"type"` // custom, isp, app
+	Type    string   `toml:"type" json:"type"` // custom, isp, app, game
 	IPs     []string `toml:"ips" json:"ips"`
 	Apps    []string `toml:"apps" json:"apps"` // 应用规则的应用列表
+	Game    string   `toml:"game" json:"game"` // 游戏规则：对应的 .rules 文件名（去 .rules 后缀），其 CIDR 从该文件读取
 }
 
 // DefaultRoutingConfig 返回默认配置
@@ -43,9 +48,12 @@ func DefaultRoutingConfig() *RoutingConfig {
 		BalanceMode:  "balanced",
 		BalanceRatio: "1:1",
 		ISP: ISPConfig{
-			Telecom: []string{},
-			Unicom:  []string{},
-			Mobile:  []string{},
+			Enabled:    true,
+			AutoDetect: true,
+			WANMapping: map[string]string{},
+			Telecom:    []string{},
+			Unicom:     []string{},
+			Mobile:     []string{},
 		},
 		Rules: []Rule{},
 	}

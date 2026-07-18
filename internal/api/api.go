@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/Wooo0/wan-manager/internal/collector"
 	"github.com/Wooo0/wan-manager/internal/dpi"
+	"github.com/Wooo0/wan-manager/internal/rules"
 	"github.com/Wooo0/wan-manager/internal/routing"
 	"github.com/Wooo0/wan-manager/internal/web"
 )
@@ -61,6 +65,7 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/apps/catalog", h.handleAppCatalog)
 	mux.HandleFunc("/api/v1/dpi/flows", h.handleDPIFlows)
 	mux.HandleFunc("/api/v1/isp/logo", h.handleISPLogo)
+	mux.HandleFunc("/api/v1/game-library", h.handleGameLibrary)
 	mux.HandleFunc("/api/v1/events", h.handleEvents)
 }
 
@@ -293,6 +298,9 @@ func (h *APIHandler) handlePostRouting(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if v, ok := raw["game"].(string); ok {
+		rule.Game = v
+	}
 
 	if rule.Name == "" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -300,6 +308,18 @@ func (h *APIHandler) handlePostRouting(w http.ResponseWriter, r *http.Request) {
 			"message": "规则名称不能为空",
 		})
 		return
+	}
+
+	// 游戏规则：必须指定 .rules 文件且目录中存在，否则建出空 ipset 无意义
+	if rule.Type == "game" {
+		if rule.Game == "" {
+			rule.Game = rule.Name
+		}
+		if err := h.validateGameRule(rule.Game); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
+			return
+		}
 	}
 
 	cfg := h.routingManager.GetConfigCopy()
@@ -346,6 +366,18 @@ func (h *APIHandler) handlePutRouting(w http.ResponseWriter, r *http.Request) {
 			"message": "请求参数格式错误",
 		})
 		return
+	}
+
+	// 游戏规则：校验 .rules 文件存在
+	if updatedRule.Type == "game" {
+		if updatedRule.Game == "" {
+			updatedRule.Game = updatedRule.Name
+		}
+		if err := h.validateGameRule(updatedRule.Game); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
+			return
+		}
 	}
 
 	cfg := h.routingManager.GetConfigCopy()
@@ -427,6 +459,59 @@ func (h *APIHandler) handleDeleteRouting(w http.ResponseWriter, r *http.Request)
 
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "规则删除成功",
+	})
+}
+
+// validateGameRule 校验游戏规则引用的 .rules 文件是否存在于游戏目录。
+func (h *APIHandler) validateGameRule(gameKey string) error {
+	dir := h.routingManager.GameRulesDir()
+	if dir == "" {
+		return fmt.Errorf("未配置游戏规则目录（game_rules_dir）")
+	}
+	if _, err := os.Stat(filepath.Join(dir, gameKey+".rules")); err != nil {
+		return fmt.Errorf("未找到 %s.rules，请将规则文件放入 %s 目录后重试", gameKey, dir)
+	}
+	return nil
+}
+
+// handleGameLibrary 列出游戏规则目录下所有可用的 .rules 文件（只读）。
+// 游戏的分配/启用走统一的 /api/v1/routing（Rule.Type="game"）。
+// 该接口仅用于规则弹窗中的下拉选择器。
+func (h *APIHandler) handleGameLibrary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	if h.routingManager == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"rules_dir": "", "games": []interface{}{}})
+		return
+	}
+
+	dir := h.routingManager.GameRulesDir()
+	lib := []map[string]interface{}{}
+	if dir != "" {
+		if files, err := rules.ParseDir(dir); err == nil {
+			keys := make([]string, 0, len(files))
+			for k := range files {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				rf := files[k]
+				lib = append(lib, map[string]interface{}{
+					"name":       k,
+					"title":      rf.Title,
+					"subtitle":   rf.Subtitle,
+					"source":     rf.Source,
+					"cidr_count": len(rf.CIDRs),
+					"warnings":   rf.Warnings,
+				})
+			}
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"rules_dir": dir,
+		"games":     lib,
 	})
 }
 

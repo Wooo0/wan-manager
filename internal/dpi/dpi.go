@@ -90,6 +90,35 @@ type ApplicationInfo struct {
 	Description string
 }
 
+// DPIConfig DPI 检测器配置（由 config 包引用，保持 dpi 自包含）。
+type DPIConfig struct {
+	Mode         string       `toml:"mode"`          // mock | system
+	PollInterval int          `toml:"poll_interval"` // conntrack 轮询间隔（秒）
+	DNS          DPIDNSConfig `toml:"dns"`
+}
+
+// DPIDNSConfig DNS 域名关联配置（用于按域名识别 HTTPS 等应用）。
+type DPIDNSConfig struct {
+	Source       string `toml:"source"` // adguard | none
+	AdGuardURL   string `toml:"adguard_url"`
+	AdGuardToken string `toml:"adguard_token"`
+	AdGuardUser  string `toml:"adguard_username"`
+	AdGuardPass  string `toml:"adguard_password"`
+	TTL          int    `toml:"ttl"` // 域名->IP 关联过期时间（秒）
+}
+
+// DefaultDPIConfig 返回 DPI 默认配置。
+func DefaultDPIConfig() DPIConfig {
+	return DPIConfig{
+		Mode:         "system",
+		PollInterval: 5,
+		DNS: DPIDNSConfig{
+			Source: "adguard",
+			TTL:    300,
+		},
+	}
+}
+
 var AppCatalog = map[string]ApplicationInfo{
 	"http":          {Name: "HTTP", Category: "Web", Risk: 1, Description: "超文本传输协议"},
 	"https":         {Name: "HTTPS", Category: "Web", Risk: 0, Description: "安全超文本传输协议"},

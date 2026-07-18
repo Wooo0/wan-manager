@@ -276,6 +276,20 @@ chmod +x "$BINARY_NAME"
 cp "$BINARY_NAME" "${INSTALL_DIR}/${BINARY_NAME}"
 echo -e "  ${GREEN}✓${NC} 二进制文件: ${INSTALL_DIR}/${BINARY_NAME}"
 
+# 安装运营商 IP 快照（离线回退用，随二进制分发，位于其同级 data/isp/）
+if [ -d "data/isp" ]; then
+    mkdir -p "${INSTALL_DIR}/data/isp"
+    cp -r data/isp/*.txt "${INSTALL_DIR}/data/isp/" 2>/dev/null
+    echo -e "  ${GREEN}✓${NC} 运营商 IP 快照: ${INSTALL_DIR}/data/isp/"
+fi
+
+# 安装游戏规则库（SSTap-Rule .rules，位于二进制同级 rules/game/）
+if [ -d "rules/game" ]; then
+    mkdir -p "${INSTALL_DIR}/rules/game"
+    cp -r rules/game/*.rules "${INSTALL_DIR}/rules/game/" 2>/dev/null
+    echo -e "  ${GREEN}✓${NC} 游戏规则库: ${INSTALL_DIR}/rules/game/"
+fi
+
 # 创建配置目录
 mkdir -p "$CONFIG_DIR"
 echo -e "  ${GREEN}✓${NC} 配置目录: ${CONFIG_DIR}"

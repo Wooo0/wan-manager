@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wooo0/wan-manager/internal/dpi"
+	"github.com/Wooo0/wan-manager/internal/rules"
 )
 
 // cmdTimeout 外部命令（ipset/iptables/ip 等）的执行超时，防止工具卡死挂住管理器。
@@ -22,14 +25,23 @@ func (m *Manager) runCmd(name string, args ...string) error {
 	return exec.CommandContext(ctx, name, args...).Run()
 }
 
+// 运营商内部键（与 ispdata / 配置 wan_mapping 保持一致）
+const (
+	opTelecom = "telecom"
+	opUnicom  = "unicom"
+	opMobile  = "mobile"
+)
+
 // Manager 策略路由管理器
 type Manager struct {
 	mu       sync.RWMutex
 	config   *RoutingConfig
-	wanTable map[string]int // WAN 名称 -> 路由表编号
+	wanTable map[string]int    // WAN 名称 -> 路由表编号
 	active   bool
 	detector dpi.Detector
-	appSets  map[string]string // app名称 -> ipset名称（动态维护）
+	appSets     map[string]string // app名称 -> ipset名称（动态维护）
+	ispWAN      map[string]string // 运营商(telecom/unicom/mobile) -> WAN 名称，启动时识别一次
+	gameRulesDir string            // 游戏 .rules 目录（已解析为绝对路径）
 }
 
 // NewManager 创建策略路由管理器
@@ -38,6 +50,7 @@ func NewManager(config *RoutingConfig, wanInterfaces []string) *Manager {
 		config:   config,
 		wanTable: make(map[string]int),
 		appSets:  make(map[string]string),
+		ispWAN:   make(map[string]string),
 	}
 
 	// 为每个 WAN 口分配路由表编号（从 100 开始）
@@ -53,6 +66,44 @@ func (m *Manager) SetDPIDetector(detector dpi.Detector) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.detector = detector
+}
+
+// SetISPOperatorMap 设置运营商 -> WAN 映射（由 main 启动时检测/配置得到，避免写死）。
+func (m *Manager) SetISPOperatorMap(mapping map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ispWAN = mapping
+}
+
+// SetGameRulesDir 设置游戏 .rules 目录（由 main 解析为绝对路径后传入）。
+func (m *Manager) SetGameRulesDir(dir string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.gameRulesDir = dir
+}
+
+// GameRulesDir 返回当前游戏 .rules 目录（供 API 列举用）。
+func (m *Manager) GameRulesDir() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.gameRulesDir
+}
+
+// readGameCIDRs 读取某个游戏的 .rules 文件并解析出已校验的 CIDR 列表。
+func (m *Manager) readGameCIDRs(name string) ([]string, error) {
+	if m.gameRulesDir == "" {
+		return nil, fmt.Errorf("游戏规则目录未配置")
+	}
+	path := filepath.Join(m.gameRulesDir, name+".rules")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	rf, err := rules.ParseRuleFile(name+".rules", data)
+	if err != nil {
+		return nil, err
+	}
+	return rf.CIDRs, nil
 }
 
 // GetDPIDetector 获取 DPI 检测器
@@ -89,14 +140,10 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("配置 ip rule 失败: %w", err)
 	}
 
-	// 4. 启动 DPI（如果有应用规则且配置了检测器）
-	if m.detector != nil && m.hasAppRules() {
+	// 4. 注册 DPI 回调（检测器自身生命周期由 main 管理，
+	// 这样即使策略路由关闭，DPI 流仍可在前端展示）
+	if m.detector != nil {
 		m.detector.RegisterCallback(m.onFlowDetected)
-		if err := m.detector.Start(); err != nil {
-			log.Printf("DPI 启动失败: %v", err)
-		} else {
-			log.Println("DPI 深度包检测已启动")
-		}
 	}
 
 	m.active = true
@@ -114,12 +161,6 @@ func (m *Manager) Stop() error {
 	}
 
 	log.Println("停止策略路由...")
-
-	// 0. 停止 DPI
-	if m.detector != nil {
-		m.detector.Stop()
-		log.Println("DPI 已停止")
-	}
 
 	// 1. 删除 ip rule
 	m.cleanupIPRules()
@@ -209,6 +250,15 @@ func (m *Manager) GetConfigCopy() *RoutingConfig {
 	return &cp
 }
 
+// gameIPSetName 返回某游戏规则对应的 ipset 名（与 createIPSets/setupIPTables 保持一致）。
+func (m *Manager) gameIPSetName(rule Rule) string {
+	key := rule.Game
+	if key == "" {
+		key = rule.Name
+	}
+	return "game_" + sanitizeName(key)
+}
+
 // createIPSets 创建 ipset 集合
 func (m *Manager) createIPSets() error {
 	// 为每个 WAN 口创建 ipset
@@ -244,28 +294,55 @@ func (m *Manager) createIPSets() error {
 		log.Printf("创建 ipset: %s (%d 个 IP)", name, len(ips))
 	}
 
-	// 为自定义规则创建 ipset
+	// 为自定义 / 应用 / 游戏规则创建 ipset（游戏规则复用 .rules 文件作为 IP 来源）
 	for _, rule := range m.config.Rules {
 		if !rule.Enabled {
 			continue
 		}
-		if rule.Type != "custom" && rule.Type != "app" {
-			continue
-		}
-		setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
-		m.runCmd("ipset", "destroy", setName)
-		if err := m.runCmd("ipset", "create", setName, "hash:ip"); err != nil {
-			return fmt.Errorf("创建 ipset %s 失败: %w", setName, err)
-		}
-		if rule.Type == "custom" {
+		switch rule.Type {
+		case "app":
+			setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
+			m.runCmd("ipset", "destroy", setName)
+			if err := m.runCmd("ipset", "create", setName, "hash:net"); err != nil {
+				return fmt.Errorf("创建 ipset %s 失败: %w", setName, err)
+			}
+			log.Printf("创建应用规则 ipset: %s (%d 个应用，动态填充)", setName, len(rule.Apps))
+		case "game":
+			key := rule.Game
+			if key == "" {
+				key = rule.Name
+			}
+			setName := "game_" + sanitizeName(key)
+			m.runCmd("ipset", "destroy", setName)
+			if err := m.runCmd("ipset", "create", setName, "hash:net"); err != nil {
+				return fmt.Errorf("创建游戏 ipset %s 失败: %w", setName, err)
+			}
+			cidrs, err := m.readGameCIDRs(key)
+			if err != nil {
+				log.Printf("游戏 %s 读取规则失败: %v", key, err)
+				continue
+			}
+			for _, c := range cidrs {
+				if err := m.runCmd("ipset", "add", setName, c); err != nil {
+					log.Printf("添加 CIDR %s 到 %s 失败: %v", c, setName, err)
+				}
+			}
+			log.Printf("创建游戏 ipset: %s (%d 个 CIDR) -> %s", setName, len(cidrs), rule.WAN)
+		case "custom", "":
+			setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
+			m.runCmd("ipset", "destroy", setName)
+			if err := m.runCmd("ipset", "create", setName, "hash:ip"); err != nil {
+				return fmt.Errorf("创建 ipset %s 失败: %w", setName, err)
+			}
 			for _, ip := range rule.IPs {
 				if err := m.runCmd("ipset", "add", setName, ip); err != nil {
 					log.Printf("添加 IP %s 到 %s 失败: %v", ip, setName, err)
 				}
 			}
 			log.Printf("创建规则 ipset: %s (%d 个 IP)", setName, len(rule.IPs))
-		} else if rule.Type == "app" {
-			log.Printf("创建应用规则 ipset: %s (%d 个应用，动态填充)", setName, len(rule.Apps))
+		default:
+			// isp 等类型不在此建 ipset（见上方运营商段）
+			continue
 		}
 	}
 
@@ -281,12 +358,15 @@ func (m *Manager) setupIPTables() error {
 	// 将自定义链插入到 PREROUTING
 	m.runCmd("iptables", "-t", "mangle", "-I", "PREROUTING", "-j", "WAN_MANAGER")
 
-	// 为每个自定义规则添加 MARK
+	// 为每个自定义/应用/游戏规则添加 MARK
 	for _, rule := range m.config.Rules {
 		if !rule.Enabled {
 			continue
 		}
 		setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
+		if rule.Type == "game" {
+			setName = m.gameIPSetName(rule)
+		}
 		tableNum := m.wanTable[rule.WAN]
 		if tableNum == 0 {
 			log.Printf("未知的 WAN 口: %s", rule.WAN)
@@ -300,21 +380,29 @@ func (m *Manager) setupIPTables() error {
 		log.Printf("添加规则: %s -> %s (mark %d)", rule.Name, rule.WAN, tableNum)
 	}
 
-	// 运营商分流规则
-	ispWAN := map[string]string{
-		"isp_telecom": "wan1", // 默认电信走 wan1
-		"isp_unicom":  "wan2", // 默认联通走 wan2
-		"isp_mobile":  "wan1", // 移动默认走 wan1
-	}
-
-	for setName, wan := range ispWAN {
-		tableNum := m.wanTable[wan]
-		if tableNum == 0 {
-			continue
+	// 运营商分流规则（映射由启动时检测得到，避免写死 wan1/wan2）
+	if m.config.ISP.Enabled {
+		ispSets := map[string]string{
+			"isp_telecom": opTelecom,
+			"isp_unicom":  opUnicom,
+			"isp_mobile":  opMobile,
 		}
-		cmd := fmt.Sprintf("iptables -t mangle -A WAN_MANAGER -m set --match-set %s dst -j MARK --set-mark %d", setName, tableNum)
-		if err := m.runCmd("sh", "-c", cmd); err != nil {
-			log.Printf("添加运营商分流规则失败: %v", err)
+		for setName, op := range ispSets {
+			wan, ok := m.ispWAN[op]
+			if !ok {
+				log.Printf("运营商分流跳过 %s: 未检测到对应 WAN（如需可用请在 wan_mapping 手动指定）", op)
+				continue
+			}
+			tableNum := m.wanTable[wan]
+			if tableNum == 0 {
+				continue
+			}
+			cmd := fmt.Sprintf("iptables -t mangle -A WAN_MANAGER -m set --match-set %s dst -j MARK --set-mark %d", setName, tableNum)
+			if err := m.runCmd("sh", "-c", cmd); err != nil {
+				log.Printf("添加运营商分流规则失败: %v", err)
+			} else {
+				log.Printf("运营商分流: %s -> %s (mark %d)", op, wan, tableNum)
+			}
 		}
 	}
 
@@ -396,6 +484,10 @@ func (m *Manager) cleanupIPSets() {
 		m.runCmd("ipset", "destroy", name)
 	}
 	for _, rule := range m.config.Rules {
+		if rule.Type == "game" {
+			m.runCmd("ipset", "destroy", m.gameIPSetName(rule))
+			continue
+		}
 		setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
 		m.runCmd("ipset", "destroy", setName)
 	}
