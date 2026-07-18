@@ -9,10 +9,13 @@ import (
 
 // RoutingConfig 策略路由配置
 type RoutingConfig struct {
-	Enabled    bool       `toml:"enabled"`
-	DefaultWAN string     `toml:"default_wan"`
-	ISP        ISPConfig  `toml:"isp"`
-	Rules      []Rule     `toml:"rules"`
+	Enabled        bool       `toml:"enabled"`
+	DefaultWAN     string     `toml:"default_wan"`
+	BalanceMode    string     `toml:"balance_mode"`
+	BalanceRatio   string     `toml:"balance_ratio"`
+	ISP            ISPConfig  `toml:"isp"`
+	Rules          []Rule     `toml:"rules"`
+	MWAN3Config    *MWAN3Config `json:"mwan3_config,omitempty"`
 }
 
 // ISPConfig 运营商 IP 配置
@@ -24,18 +27,21 @@ type ISPConfig struct {
 
 // Rule 分流规则
 type Rule struct {
-	Name    string   `toml:"name"`
-	Enabled bool     `toml:"enabled"`
-	WAN     string   `toml:"wan"`
-	Type    string   `toml:"type"` // custom, isp, app
-	IPs     []string `toml:"ips"`
+	Name    string   `toml:"name" json:"name"`
+	Enabled bool     `toml:"enabled" json:"enabled"`
+	WAN     string   `toml:"wan" json:"wan"`
+	Type    string   `toml:"type" json:"type"` // custom, isp, app
+	IPs     []string `toml:"ips" json:"ips"`
+	Apps    []string `toml:"apps" json:"apps"` // 应用规则的应用列表
 }
 
 // DefaultRoutingConfig 返回默认配置
 func DefaultRoutingConfig() *RoutingConfig {
 	return &RoutingConfig{
-		Enabled:    false,
-		DefaultWAN: "wan1",
+		Enabled:      false,
+		DefaultWAN:   "wan1",
+		BalanceMode:  "balanced",
+		BalanceRatio: "1:1",
 		ISP: ISPConfig{
 			Telecom: []string{},
 			Unicom:  []string{},

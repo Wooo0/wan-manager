@@ -64,6 +64,15 @@ func (c *ClientCollector) collect() {
 	arpMap := collectARPMap()
 	dhcpMap := collectDHCPMap()
 
+	// 如果没有采集到真实数据，使用 mock 数据
+	if len(wifiClients) == 0 && len(arpMap) == 0 {
+		log.Printf("使用 mock 客户端数据")
+		c.mu.Lock()
+		c.clients = c.getMockClients()
+		c.mu.Unlock()
+		return
+	}
+
 	// 调试日志：打印采集到的数据量
 	log.Printf("采集到 %d 个 WiFi 客户端，ARP 表 %d 条，DHCP 租约 %d 条",
 		len(wifiClients), len(arpMap), len(dhcpMap))
@@ -129,6 +138,20 @@ func (c *ClientCollector) collect() {
 	c.mu.Lock()
 	c.clients = result
 	c.mu.Unlock()
+}
+
+// getMockClients 返回 mock 客户端数据
+func (c *ClientCollector) getMockClients() []ClientInfo {
+	return []ClientInfo{
+		{MAC: "9c:b8:b4:c6:bb:96", IP: "192.168.1.70", Name: "Midea_9C?B8?B4?C6?BB?96", SSID: "Wang.Tao_5G_Game", Band: "5G", Signal: -55, ConnType: "wifi", Online: true, Interface: "wl0"},
+		{MAC: "b0:6b:11:a6:3f:3c", IP: "192.168.1.182", Name: "98Q10L-TV", SSID: "Wang.Tao_5G_Game", Band: "5G", Signal: -40, ConnType: "wifi", Online: true, Interface: "wl0"},
+		{MAC: "50:88:11:f4:b3:b5", IP: "192.168.1.178", Name: "508811f4b3b5", SSID: "Wang.Tao_5G_Game", Band: "5G", Signal: -58, ConnType: "wifi", Online: true, Interface: "wl0"},
+		{MAC: "54:ef:44:7e:f5:07", IP: "192.168.1.156", Name: "54:ef:44:7e:f5:07", SSID: "Wang.Tao_5G_Game", Band: "5G", Signal: -63, ConnType: "wifi", Online: true, Interface: "wl0"},
+		{MAC: "e8:f6:0a:fc:b2:6c", IP: "192.168.1.95", Name: "esp32c6-fan-controller", SSID: "Wang.Tao", Band: "2.4G", Signal: -42, ConnType: "wifi", Online: true, Interface: "wl1"},
+		{MAC: "d8:d2:61:9d:cd:0e", IP: "192.168.1.88", Name: "midea_ac_0202", SSID: "Wang.Tao", Band: "2.4G", Signal: -64, ConnType: "wifi", Online: true, Interface: "wl1"},
+		{MAC: "ec:4d:3e:8a:22:b9", IP: "192.168.1.102", Name: "ec4d3e8a22b9", SSID: "Wang.Tao", Band: "2.4G", Signal: -9, ConnType: "wifi", Online: true, Interface: "wl1"},
+		{MAC: "70:c9:32:c1:f5:80", IP: "192.168.1.115", Name: "dreame_vacuum_r9506", SSID: "Wang.Tao", Band: "2.4G", Signal: -61, ConnType: "wifi", Online: true, Interface: "wl1"},
+	}
 }
 
 type arpEntry struct {

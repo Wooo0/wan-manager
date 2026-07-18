@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/Wooo0/wan-manager/internal/dpi"
 )
 
 // Manager 策略路由管理器
@@ -14,6 +16,8 @@ type Manager struct {
 	config   *RoutingConfig
 	wanTable map[string]int // WAN 名称 -> 路由表编号
 	active   bool
+	detector dpi.Detector
+	appSets  map[string]string // app名称 -> ipset名称（动态维护）
 }
 
 // NewManager 创建策略路由管理器
@@ -21,6 +25,7 @@ func NewManager(config *RoutingConfig, wanInterfaces []string) *Manager {
 	m := &Manager{
 		config:   config,
 		wanTable: make(map[string]int),
+		appSets:  make(map[string]string),
 	}
 
 	// 为每个 WAN 口分配路由表编号（从 100 开始）
@@ -29,6 +34,20 @@ func NewManager(config *RoutingConfig, wanInterfaces []string) *Manager {
 	}
 
 	return m
+}
+
+// SetDPIDetector 设置 DPI 检测器
+func (m *Manager) SetDPIDetector(detector dpi.Detector) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.detector = detector
+}
+
+// GetDPIDetector 获取 DPI 检测器
+func (m *Manager) GetDPIDetector() dpi.Detector {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.detector
 }
 
 // Start 启动策略路由
@@ -58,6 +77,16 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("配置 ip rule 失败: %w", err)
 	}
 
+	// 4. 启动 DPI（如果有应用规则且配置了检测器）
+	if m.detector != nil && m.hasAppRules() {
+		m.detector.RegisterCallback(m.onFlowDetected)
+		if err := m.detector.Start(); err != nil {
+			log.Printf("DPI 启动失败: %v", err)
+		} else {
+			log.Println("DPI 深度包检测已启动")
+		}
+	}
+
 	m.active = true
 	log.Println("策略路由启动成功")
 	return nil
@@ -73,6 +102,12 @@ func (m *Manager) Stop() error {
 	}
 
 	log.Println("停止策略路由...")
+
+	// 0. 停止 DPI
+	if m.detector != nil {
+		m.detector.Stop()
+		log.Println("DPI 已停止")
+	}
 
 	// 1. 删除 ip rule
 	m.cleanupIPRules()
@@ -173,20 +208,27 @@ func (m *Manager) createIPSets() error {
 
 	// 为自定义规则创建 ipset
 	for _, rule := range m.config.Rules {
-		if !rule.Enabled || rule.Type != "custom" {
+		if !rule.Enabled {
+			continue
+		}
+		if rule.Type != "custom" && rule.Type != "app" {
 			continue
 		}
 		setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
 		exec.Command("ipset", "destroy", setName).Run()
-		if err := exec.Command("ipset", "create", setName, "hash:net").Run(); err != nil {
+		if err := exec.Command("ipset", "create", setName, "hash:ip").Run(); err != nil {
 			return fmt.Errorf("创建 ipset %s 失败: %w", setName, err)
 		}
-		for _, ip := range rule.IPs {
-			if err := exec.Command("ipset", "add", setName, ip).Run(); err != nil {
-				log.Printf("添加 IP %s 到 %s 失败: %v", ip, setName, err)
+		if rule.Type == "custom" {
+			for _, ip := range rule.IPs {
+				if err := exec.Command("ipset", "add", setName, ip).Run(); err != nil {
+					log.Printf("添加 IP %s 到 %s 失败: %v", ip, setName, err)
+				}
 			}
+			log.Printf("创建规则 ipset: %s (%d 个 IP)", setName, len(rule.IPs))
+		} else if rule.Type == "app" {
+			log.Printf("创建应用规则 ipset: %s (%d 个应用，动态填充)", setName, len(rule.Apps))
 		}
-		log.Printf("创建规则 ipset: %s (%d 个 IP)", setName, len(rule.IPs))
 	}
 
 	return nil
@@ -327,4 +369,54 @@ func sanitizeName(name string) string {
 		result = result[:20]
 	}
 	return string(result)
+}
+
+// hasAppRules 检查是否有启用的应用规则
+func (m *Manager) hasAppRules() bool {
+	for _, rule := range m.config.Rules {
+		if rule.Enabled && rule.Type == "app" && len(rule.Apps) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// onFlowDetected DPI 流识别回调 - 根据应用规则动态添加 IP 到 ipset
+func (m *Manager) onFlowDetected(flow *dpi.FlowInfo) {
+	if !flow.Detected || flow.Application == "" {
+		return
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// 遍历所有应用规则，找到匹配的应用
+	for _, rule := range m.config.Rules {
+		if !rule.Enabled || rule.Type != "app" {
+			continue
+		}
+
+		// 检查该规则是否包含此应用
+		matched := false
+		for _, app := range rule.Apps {
+			if app == flow.Application {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+
+		// 将目标 IP 动态添加到规则的 ipset
+		setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
+		tableNum := m.wanTable[rule.WAN]
+		if tableNum == 0 {
+			continue
+		}
+
+		// 添加目标 IP 到 ipset
+		exec.Command("ipset", "add", setName, flow.DstIP, "-exist").Run()
+		log.Printf("应用分流: %s -> %s (IP: %s)", flow.Application, rule.WAN, flow.DstIP)
+	}
 }

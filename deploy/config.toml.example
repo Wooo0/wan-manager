@@ -10,9 +10,9 @@ interval = 2
 [[wan]]
 name = "wan1"
 interface = "pppoe-wan"
-label = "电信 WAN1"
+label = "WAN1"
 
 [[wan]]
 name = "wan2"
 interface = "pppoe-wan_2"
-label = "联通 WAN2"
+label = "WAN2"

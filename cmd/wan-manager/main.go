@@ -13,6 +13,7 @@ import (
 	"github.com/Wooo0/wan-manager/internal/api"
 	"github.com/Wooo0/wan-manager/internal/collector"
 	"github.com/Wooo0/wan-manager/internal/config"
+	"github.com/Wooo0/wan-manager/internal/dpi"
 	"github.com/Wooo0/wan-manager/internal/routing"
 )
 
@@ -76,6 +77,11 @@ func main() {
 		wanNames[i] = w.Name
 	}
 	routingManager := routing.NewManager(routingCfg, wanNames)
+
+	// 初始化 DPI 检测器（开发环境使用 mock，生产环境替换为真实 nDPI）
+	dpiDetector := dpi.NewMockDetector()
+	routingManager.SetDPIDetector(dpiDetector)
+
 	if routingCfg.Enabled {
 		if err := routingManager.Start(); err != nil {
 			log.Printf("启动策略路由失败: %v", err)

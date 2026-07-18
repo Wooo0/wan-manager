@@ -3,343 +3,1068 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WAN Manager - 智能分流管理</title>
+    <title>WAN Manager</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        .container { max-width: 1200px; margin: 0 auto; }
         
-        /* 头部 */
+        :root {
+            --bg: #f5f7fa;
+            --card-bg: #ffffff;
+            --border: #e1e4e8;
+            --text-primary: #24292e;
+            --text-secondary: #586069;
+            --text-muted: #959da5;
+            --accent: #0366d6;
+            --success: #28a745;
+            --warning: #f0ad4e;
+            --danger: #d73a49;
+            --shadow: 0 1px 3px rgba(0,0,0,0.08);
+            --shadow-lg: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+        
         .header {
-            background: rgba(255,255,255,0.95);
-            border-radius: 16px;
-            padding: 24px 32px;
-            margin-bottom: 24px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 32px;
             display: flex;
             align-items: center;
             justify-content: space-between;
+            box-shadow: var(--shadow);
         }
-        .header h1 {
-            font-size: 24px;
-            color: #333;
+        
+        .header-left {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 16px;
         }
-        .header .logo {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            border-radius: 10px;
+        
+        .logo {
+            width: 36px;
+            height: 36px;
+            background: var(--accent);
+            border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
             color: white;
-            font-weight: bold;
         }
-        .status-badge {
-            padding: 6px 16px;
-            border-radius: 20px;
-            font-size: 14px;
+        
+        .title-group h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .version {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            background: rgba(40, 167, 69, 0.1);
+            border: 1px solid rgba(40, 167, 69, 0.2);
+            border-radius: 16px;
+            font-size: 13px;
+            color: var(--success);
             font-weight: 500;
         }
-        .status-online { background: #d4edda; color: #155724; }
-        .status-offline { background: #f8d7da; color: #721c24; }
         
-        /* 标签页 */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px 32px;
+        }
+        
         .tabs {
             display: flex;
             gap: 8px;
-            margin-bottom: 24px;
-        }
-        .tab {
-            padding: 12px 24px;
-            background: rgba(255,255,255,0.7);
-            border: none;
+            margin-top: 8px;
+            margin-bottom: 40px;
+            background: var(--card-bg);
+            padding: 6px;
             border-radius: 10px;
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+        }
+        
+        .tab {
+            flex: 1;
+            padding: 10px 20px;
+            background: transparent;
+            border: none;
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 15px;
-            color: #555;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-secondary);
             transition: all 0.2s;
         }
-        .tab:hover { background: rgba(255,255,255,0.9); }
-        .tab.active {
-            background: white;
-            color: #667eea;
-            font-weight: 600;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        
+        .tab:hover {
+            color: var(--text-primary);
+            background: var(--bg);
         }
         
-        /* 卡片 */
+        .tab.active {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .page {
+            display: none;
+            animation: fadeIn 0.2s ease;
+        }
+        
+        .page.active {
+            display: block;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
         .card {
-            background: rgba(255,255,255,0.95);
-            border-radius: 16px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
             padding: 24px;
             margin-bottom: 20px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-        }
-        .card-title {
-            font-size: 18px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .card-title::before {
-            content: '';
-            width: 4px;
-            height: 20px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            border-radius: 2px;
+            box-shadow: var(--shadow);
         }
         
-        /* WAN 状态网格 */
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .btn {
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #0356b6;
+        }
+        
+        .btn-secondary {
+            background: var(--bg);
+            color: var(--text-secondary);
+            border-color: var(--border);
+        }
+        
+        .btn-secondary:hover {
+            background: #e8eaed;
+        }
+        
+        .btn-danger {
+            background: rgba(215, 58, 73, 0.1);
+            color: var(--danger);
+            border-color: rgba(215, 58, 73, 0.2);
+        }
+        
+        .btn-danger:hover {
+            background: rgba(215, 58, 73, 0.2);
+        }
+        
         .wan-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
             gap: 20px;
         }
+        
         .wan-card {
-            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+            background: var(--card-bg);
+            border: 1px solid var(--border);
             border-radius: 12px;
-            padding: 20px;
-            border-left: 4px solid #667eea;
+            padding: 24px;
+            box-shadow: var(--shadow);
+            transition: box-shadow 0.2s;
         }
-        .wan-card.disconnected { border-left-color: #dc3545; opacity: 0.7; }
+        
+        .wan-card:hover {
+            box-shadow: var(--shadow-lg);
+        }
+        
         .wan-header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
+            align-items: flex-start;
+            margin-bottom: 20px;
         }
-        .wan-name { font-size: 16px; font-weight: 600; color: #333; }
-        .wan-status {
-            padding: 4px 12px;
+        
+        .wan-name {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+        
+        .wan-label {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        
+        .isp-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg);
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        .isp-logo {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+        }
+        
+        .status-badge {
+            padding: 4px 10px;
             border-radius: 12px;
             font-size: 12px;
             font-weight: 500;
         }
-        .wan-status.online { background: #28a745; color: white; }
-        .wan-status.offline { background: #dc3545; color: white; }
-        .wan-stats {
+        
+        .status-badge.online {
+            background: rgba(40, 167, 69, 0.1);
+            color: var(--success);
+        }
+        
+        .status-badge.offline {
+            background: rgba(215, 58, 73, 0.1);
+            color: var(--danger);
+        }
+        
+        .speed-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        
+        .speed-box {
+            background: var(--bg);
+            border-radius: 10px;
+            padding: 16px;
+        }
+        
+        .speed-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        
+        .speed-value {
+            font-size: 28px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-primary);
+        }
+        
+        .speed-value .unit {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-left: 4px;
+        }
+        
+        .speed-value.download { color: var(--success); }
+        .speed-value.upload { color: var(--accent); }
+        
+        .mini-chart {
+            height: 40px;
+            background: var(--bg);
+            border-radius: 6px;
+            margin-bottom: 16px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .chart-line {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 100%;
+        }
+        
+        .wan-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
             gap: 12px;
         }
+        
         .stat-item {
-            background: white;
-            padding: 12px;
+            background: var(--bg);
             border-radius: 8px;
+            padding: 12px;
         }
+        
         .stat-label {
-            font-size: 12px;
-            color: #666;
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             margin-bottom: 4px;
         }
-        .stat-value {
-            font-size: 18px;
-            font-weight: 600;
-            color: #333;
-        }
-        .stat-value.download { color: #28a745; }
-        .stat-value.upload { color: #007bff; }
         
-        /* 客户端表格 */
+        .stat-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+        }
+        
+        .network-info {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            font-size: 13px;
+        }
+        
+        .info-label {
+            color: var(--text-muted);
+        }
+        
+        .info-value {
+            color: var(--text-primary);
+            font-weight: 500;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+        
+        .latency-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-top: 16px;
+        }
+        
+        .latency-item {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 12px;
+        }
+        
+        .latency-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .latency-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+        
+        .latency-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--success);
+        }
+        
+        .latency-value.high { color: var(--warning); }
+        .latency-value.critical { color: var(--danger); }
+        
+        .latency-bars {
+            display: flex;
+            gap: 2px;
+            height: 24px;
+            align-items: flex-end;
+        }
+        
+        .latency-bar {
+            flex: 1;
+            background: var(--success);
+            border-radius: 2px;
+            min-height: 4px;
+        }
+        
+        .latency-bar.high { background: var(--warning); }
+        .latency-bar.critical { background: var(--danger); }
+        
         .client-table {
             width: 100%;
             border-collapse: collapse;
         }
+        
         .client-table th,
         .client-table td {
             padding: 12px 16px;
             text-align: left;
-            border-bottom: 1px solid #eee;
+            border-bottom: 1px solid var(--border);
         }
-        .client-table th {
-            background: #f8f9fa;
-            font-weight: 600;
-            color: #555;
-            font-size: 13px;
-        }
-        .client-table tr:hover { background: #f8f9fa; }
-        .client-name { font-weight: 500; color: #333; }
-        .client-mac { font-family: monospace; color: #666; font-size: 13px; }
-        .band-badge {
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 11px;
-            font-weight: 500;
-        }
-        .band-5g { background: #e7f3ff; color: #0066cc; }
-        .band-24g { background: #fff3e0; color: #e65100; }
-        .signal-bar {
-            display: inline-block;
-            width: 60px;
-            height: 6px;
-            background: #eee;
-            border-radius: 3px;
-            overflow: hidden;
-            vertical-align: middle;
-            margin-right: 8px;
-        }
-        .signal-fill {
-            height: 100%;
-            border-radius: 3px;
-            transition: width 0.3s;
-        }
-        .signal-good { background: #28a745; }
-        .signal-medium { background: #ffc107; }
-        .signal-poor { background: #dc3545; }
         
-        /* 路由规则 */
-        .routing-status {
+        .client-table th {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .client-table td {
+            font-size: 14px;
+        }
+        
+        .client-table tr:hover {
+            background: var(--bg);
+        }
+        
+        .band-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .band-badge.band-5g {
+            background: rgba(3, 102, 214, 0.1);
+            color: var(--accent);
+        }
+        
+        .band-badge.band-24g {
+            background: rgba(240, 173, 78, 0.1);
+            color: var(--warning);
+        }
+        
+        .signal-bar {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .signal-meter {
+            display: flex;
+            gap: 2px;
+        }
+        
+        .signal-bar-item {
+            width: 3px;
+            height: 12px;
+            background: var(--border);
+            border-radius: 1px;
+        }
+        
+        .signal-bar-item.active { background: var(--success); }
+        .signal-bar-item.medium { background: var(--warning); }
+        .signal-bar-item.weak { background: var(--danger); }
+        
+        .routing-header {
             display: flex;
             align-items: center;
-            gap: 12px;
+            justify-content: space-between;
             padding: 16px;
-            background: #f8f9fa;
-            border-radius: 10px;
+            background: var(--bg);
+            border-radius: 8px;
             margin-bottom: 20px;
         }
+        
         .routing-toggle {
             position: relative;
-            width: 50px;
-            height: 26px;
-            background: #ccc;
-            border-radius: 13px;
+            width: 44px;
+            height: 24px;
+            background: var(--border);
+            border-radius: 12px;
             cursor: pointer;
-            transition: background 0.3s;
+            transition: background 0.2s;
         }
-        .routing-toggle.active { background: #28a745; }
+        
+        .routing-toggle.active {
+            background: var(--success);
+        }
+        
         .routing-toggle::after {
             content: '';
             position: absolute;
-            top: 3px;
-            left: 3px;
+            top: 2px;
+            left: 2px;
             width: 20px;
             height: 20px;
             background: white;
             border-radius: 50%;
-            transition: transform 0.3s;
+            transition: transform 0.2s;
         }
-        .routing-toggle.active::after { transform: translateX(24px); }
-        .rule-list { list-style: none; }
+        
+        .routing-toggle.active::after {
+            transform: translateX(20px);
+        }
+        
+        .routing-toggle.loading {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .routing-toggle.loading::after {
+            animation: toggleSpin 0.8s linear infinite;
+        }
+        
+        @keyframes toggleSpin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .sub-tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0;
+        }
+        
+        .sub-tab {
+            padding: 10px 16px;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+            margin-bottom: -1px;
+        }
+        
+        .sub-tab:hover {
+            color: var(--text-primary);
+        }
+        
+        .sub-tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+        
+        .sub-tab .badge {
+            display: inline-block;
+            padding: 1px 6px;
+            background: var(--bg);
+            border-radius: 10px;
+            font-size: 11px;
+            margin-left: 4px;
+        }
+        
+        .sub-tab.active .badge {
+            background: rgba(3, 102, 214, 0.1);
+            color: var(--accent);
+        }
+        
         .rule-item {
             display: flex;
             align-items: center;
             justify-content: space-between;
             padding: 16px;
-            background: #f8f9fa;
-            border-radius: 10px;
+            background: var(--bg);
+            border-radius: 8px;
             margin-bottom: 12px;
         }
-        .rule-info { flex: 1; }
-        .rule-name { font-weight: 600; color: #333; margin-bottom: 4px; }
-        .rule-detail { font-size: 13px; color: #666; }
-        .rule-wan {
-            padding: 4px 12px;
-            background: #667eea;
-            color: white;
-            border-radius: 6px;
-            font-size: 12px;
+        
+        .rule-name {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 4px;
         }
         
-        /* 页面切换 */
-        .page { display: none; }
-        .page.active { display: block; }
+        .rule-detail {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
         
-        /* 加载状态 */
+        .rule-wan {
+            padding: 4px 10px;
+            background: rgba(3, 102, 214, 0.1);
+            color: var(--accent);
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .balance-section {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .balance-header {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+        
+        .balance-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+        }
+        
+        .balance-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        
+        .balance-value {
+            min-width: 40px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary);
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 0 12px;
+        }
+        
+        .balance-colon {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin: 0 4px;
+        }
+        
+        .rule-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .rule-table th,
+        .rule-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .rule-table th {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .rule-table td {
+            font-size: 14px;
+        }
+        
+        .rule-table tr:hover {
+            background: var(--bg);
+        }
+        
+        .rule-type-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .rule-type-badge.custom {
+            background: rgba(3, 102, 214, 0.1);
+            color: var(--accent);
+        }
+        
+        .rule-type-badge.mwan3 {
+            background: rgba(240, 173, 78, 0.1);
+            color: var(--warning);
+        }
+        
+        .rule-type-badge.isp {
+            background: rgba(40, 167, 69, 0.1);
+            color: var(--success);
+        }
+        
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .modal {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 24px;
+            width: 480px;
+            max-width: 90%;
+            box-shadow: var(--shadow-lg);
+        }
+        
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        
+        .modal-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .modal-close {
+            width: 28px;
+            height: 28px;
+            border: none;
+            background: var(--bg);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            color: var(--text-secondary);
+        }
+        
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        
+        .form-input {
+            width: 100%;
+            height: 36px;
+            padding: 0 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+            color: var(--text-primary);
+            background: white;
+        }
+        
+        .form-textarea {
+            width: 100%;
+            height: 80px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+            color: var(--text-primary);
+            background: white;
+            resize: vertical;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+        
+        .form-select {
+            width: 100%;
+            height: 36px;
+            padding: 0 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 14px;
+            color: var(--text-primary);
+            background: white;
+        }
+        
+        .form-check {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        
+        .form-check-input {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+        
+        .form-check-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        
         .loading {
             text-align: center;
             padding: 40px;
-            color: #666;
-        }
-        .loading::after {
-            content: '...';
-            animation: dots 1.5s infinite;
-        }
-        @keyframes dots {
-            0%, 20% { content: '.'; }
-            40% { content: '..'; }
-            60%, 100% { content: '...'; }
+            color: var(--text-muted);
         }
         
-        /* 响应式 */
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 12px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 2000;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .toast-success {
+            background: rgba(40, 167, 69, 0.9);
+            color: white;
+        }
+        
+        .toast-error {
+            background: rgba(215, 58, 73, 0.9);
+            color: white;
+        }
+        
+        .app-selector {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .app-category {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            margin-top: 8px;
+        }
+        
+        .app-category:first-child {
+            margin-top: 0;
+        }
+        
+        .app-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+        
+        .app-chip {
+            padding: 4px 10px;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .app-chip:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        
+        .app-chip.selected {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+        
+        .selected-apps {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            min-height: 32px;
+            padding: 8px;
+            background: var(--bg);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+        
+        .selected-app-chip {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            background: var(--accent);
+            color: white;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+        
+        .selected-app-chip .remove {
+            cursor: pointer;
+            font-weight: bold;
+            opacity: 0.8;
+        }
+        
+        .selected-app-chip .remove:hover {
+            opacity: 1;
+        }
+        
+        .loading-inline {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            padding-left: 8px;
+            border-left: 3px solid var(--accent);
+        }
+        
         @media (max-width: 768px) {
-            body { padding: 12px; }
-            .header { padding: 16px 20px; flex-direction: column; gap: 12px; }
-            .header h1 { font-size: 20px; }
-            .tabs { flex-wrap: wrap; }
-            .tab { flex: 1; min-width: 100px; text-align: center; }
+            .header { padding: 12px 16px; }
+            .container { padding: 16px; }
             .wan-grid { grid-template-columns: 1fr; }
-            .client-table { font-size: 13px; }
-            .client-table th,
-            .client-table td { padding: 8px; }
+            .speed-grid { grid-template-columns: 1fr; }
+            .latency-grid { grid-template-columns: 1fr; }
+            .wan-stats { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- 头部 -->
-        <div class="header">
-            <h1>
-                <span class="logo">W</span>
-                WAN Manager
-            </h1>
-            <span id="headerStatus" class="status-badge status-online">运行中</span>
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">W</div>
+            <div class="title-group">
+                <h1>WAN Manager</h1>
+                <div class="version" id="versionText">v0.2.0</div>
+            </div>
         </div>
-        
-        <!-- 标签页 -->
+        <div class="header-right">
+            <div class="status-indicator">
+                <span class="status-dot"></span>
+                <span id="statusText">运行中</span>
+            </div>
+        </div>
+    </header>
+    
+    <div class="container">
         <div class="tabs">
             <button class="tab active" onclick="showPage('dashboard')">状态概览</button>
             <button class="tab" onclick="showPage('clients')">客户端</button>
             <button class="tab" onclick="showPage('routing')">分流规则</button>
         </div>
         
-        <!-- 状态概览页 -->
         <div id="dashboard" class="page active">
-            <div class="card">
-                <div class="card-title">WAN 口状态</div>
-                <div id="wanGrid" class="wan-grid">
-                    <div class="loading">加载中</div>
-                </div>
-            </div>
-            
-            <div class="card">
-                <div class="card-title">系统信息</div>
-                <div class="wan-stats">
-                    <div class="stat-item">
-                        <div class="stat-label">在线客户端</div>
-                        <div class="stat-value" id="clientCount">-</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">策略路由</div>
-                        <div class="stat-value" id="routingStatus">-</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">总下载速率</div>
-                        <div class="stat-value download" id="totalRx">-</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-label">总上传速率</div>
-                        <div class="stat-value upload" id="totalTx">-</div>
-                    </div>
+            <div id="wanGrid" class="wan-grid">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <div>加载中...</div>
                 </div>
             </div>
         </div>
         
-        <!-- 客户端页 -->
         <div id="clients" class="page">
             <div class="card">
-                <div class="card-title">在线客户端</div>
+                <div class="card-header">
+                    <h2 class="card-title">在线客户端</h2>
+                </div>
                 <table class="client-table">
                     <thead>
                         <tr>
@@ -347,40 +1072,156 @@
                             <th>IP 地址</th>
                             <th>MAC 地址</th>
                             <th>频段</th>
-                            <th>信号</th>
+                            <th>信号强度</th>
                         </tr>
                     </thead>
                     <tbody id="clientTable">
-                        <tr><td colspan="5" class="loading">加载中</td></tr>
+                        <tr>
+                            <td colspan="5" class="loading">
+                                <div class="spinner"></div>
+                                <div>加载中...</div>
+                            </td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
         </div>
         
-        <!-- 分流规则页 -->
         <div id="routing" class="page">
             <div class="card">
-                <div class="card-title">策略路由</div>
-                <div class="routing-status">
-                    <div id="routingToggle" class="routing-toggle" onclick="toggleRouting()"></div>
-                    <span id="routingLabel">策略路由已关闭</span>
+                <div class="card-header">
+                    <h2 class="card-title">策略路由</h2>
+                    <button class="btn btn-primary" onclick="openAddRuleModal()">添加规则</button>
                 </div>
-                <div id="ruleList" class="rule-list">
-                    <div class="loading">加载中</div>
+                
+                <div class="routing-header">
+                    <div>
+                        <div style="font-size: 14px; font-weight: 600; margin-bottom: 4px;">策略路由开关</div>
+                        <div style="font-size: 12px; color: var(--text-muted);" id="routingLabel">策略路由已关闭</div>
+                    </div>
+                    <div id="routingToggle" class="routing-toggle" onclick="toggleRouting()"></div>
+                </div>
+                
+                <div class="sub-tabs">
+                    <button class="sub-tab active" onclick="switchSubTab('ip')" data-tab="ip">
+                        IP规则 <span class="badge" id="ipRuleCount">0</span>
+                    </button>
+                    <button class="sub-tab" onclick="switchSubTab('app')" data-tab="app">
+                        应用规则 <span class="badge" id="appRuleCount">0</span>
+                    </button>
+                    <button class="sub-tab" onclick="switchSubTab('mwan3')" data-tab="mwan3">
+                        mwan3规则 <span class="badge" id="mwan3RuleCount">0</span>
+                    </button>
+                </div>
+                
+                <div id="ipRulesPanel" class="rules-panel">
+                    <div id="customRules">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <div>加载中...</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="appRulesPanel" class="rules-panel" style="display: none;">
+                    <div id="appRules">
+                        <div class="empty-state">
+                            应用分流规则需要启用 DPI 深度包检测<br>
+                            <span style="font-size: 12px; color: var(--text-muted); margin-top: 8px; display: block;">
+                                启用后可基于应用识别进行智能分流
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="mwan3RulesPanel" class="rules-panel" style="display: none;">
+                    <!-- 转发比例显示 -->
+                    <div id="balanceSection" class="balance-section" style="margin-bottom: 20px;">
+                        <div class="balance-header">WAN口转发比例</div>
+                        <div class="balance-row">
+                            <span class="balance-label">WAN1</span>
+                            <span class="balance-value" id="wan1Ratio">-</span>
+                            <span class="balance-colon">:</span>
+                            <span class="balance-value" id="wan2Ratio">-</span>
+                            <span class="balance-label">WAN2</span>
+                        </div>
+                        <div class="balance-hint" style="font-size:12px;color:#888;margin-top:8px;">
+                            此比例由 mwan3 管理，请在路由器 mwan3 配置中修改
+                        </div>
+                    </div>
+                    
+                    <div id="mwan3Rules">
+                        <div class="loading">
+                            <div class="spinner"></div>
+                            <div>加载中...</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
+    
+    <div id="ruleModal" class="modal-overlay" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 class="modal-title" id="modalTitle">添加规则</h3>
+                <button class="modal-close" onclick="closeRuleModal()">&times;</button>
+            </div>
+            <form id="ruleForm" onsubmit="submitRule(event)">
+                <input type="hidden" id="ruleId">
+                <div class="form-group">
+                    <label class="form-label">规则名称</label>
+                    <input type="text" class="form-input" id="ruleName" placeholder="例如：游戏分流" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">目标 WAN 口</label>
+                    <select class="form-select" id="ruleWAN" required>
+                        <option value="wan1">WAN1</option>
+                        <option value="wan2">WAN2</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">规则类型</label>
+                    <select class="form-select" id="ruleType" onchange="onRuleTypeChange()">
+                        <option value="custom">自定义 IP</option>
+                        <option value="isp">运营商</option>
+                        <option value="app">应用识别</option>
+                    </select>
+                </div>
+                <div class="form-group" id="ipGroup">
+                    <label class="form-label">IP 列表</label>
+                    <textarea class="form-textarea" id="ruleIPs" placeholder="每行一个 IP 或 CIDR，例如：&#10;1.2.3.4/32&#10;5.6.7.0/24"></textarea>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">多个 IP 使用换行分隔</div>
+                </div>
+                <div class="form-group" id="appGroup" style="display: none;">
+                    <label class="form-label">选择应用</label>
+                    <div class="selected-apps" id="selectedApps">
+                        <span style="font-size: 12px; color: var(--text-muted);">点击下方应用进行选择</span>
+                    </div>
+                    <div style="height: 8px;"></div>
+                    <div class="app-selector" id="appSelector"></div>
+                </div>
+                <div class="form-group">
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input" id="ruleEnabled" checked>
+                        <label class="form-check-label" for="ruleEnabled">启用规则</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeRuleModal()">取消</button>
+                    <button type="submit" class="btn btn-primary" id="submitBtn">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <script>
-        // 格式化速率
         function formatSpeed(bytesPerSec) {
-            if (bytesPerSec < 1024) return bytesPerSec.toFixed(0) + ' B/s';
-            if (bytesPerSec < 1024 * 1024) return (bytesPerSec / 1024).toFixed(1) + ' KB/s';
-            return (bytesPerSec / 1024 / 1024).toFixed(2) + ' MB/s';
+            if (bytesPerSec < 1024) return { value: bytesPerSec.toFixed(0), unit: 'B/s' };
+            if (bytesPerSec < 1024 * 1024) return { value: (bytesPerSec / 1024).toFixed(1), unit: 'KB/s' };
+            return { value: (bytesPerSec / 1024 / 1024).toFixed(2), unit: 'MB/s' };
         }
         
-        // 格式化流量
         function formatBytes(bytes) {
             if (bytes < 1024) return bytes + ' B';
             if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
@@ -388,21 +1229,18 @@
             return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
         }
         
-        // 信号强度转百分比
         function signalToPercent(signal) {
             if (signal >= -50) return 100;
             if (signal <= -90) return 0;
             return 2 * (signal + 90);
         }
         
-        // 信号强度样式
         function signalClass(signal) {
-            if (signal >= -60) return 'signal-good';
-            if (signal >= -75) return 'signal-medium';
-            return 'signal-poor';
+            if (signal >= -60) return 'active';
+            if (signal >= -75) return 'medium';
+            return 'weak';
         }
         
-        // 显示页面
         function showPage(pageId) {
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -410,36 +1248,77 @@
             event.target.classList.add('active');
         }
         
-        // 加载 WAN 状态
+        function getISPLogo(isp) {
+            // 通过 API 获取 SVG logo，联通自动改红色
+            const supported = ['电信', '联通', '移动'];
+            if (supported.includes(isp)) {
+                return `<img src="/api/v1/isp/logo?isp=${encodeURIComponent(isp)}" alt="${isp}" style="height:20px;width:auto;vertical-align:middle;" />`;
+            }
+            // 其他运营商显示文字
+            return `<span style="font-size:12px;font-weight:bold;color:#6c757d;">${isp}</span>`;
+        }
+        
         async function loadWANStatus() {
             try {
                 const res = await fetch('/api/v1/wan');
                 const data = await res.json();
                 
                 const grid = document.getElementById('wanGrid');
-                let totalRx = 0, totalTx = 0;
                 
                 grid.innerHTML = data.map(wan => {
-                    totalRx += wan.rx_speed || 0;
-                    totalTx += wan.tx_speed || 0;
+                    const rxSpeed = formatSpeed(wan.rx_speed || 0);
+                    const txSpeed = formatSpeed(wan.tx_speed || 0);
+                    
+                    let ispHtml = '<div class="isp-badge"><span>检测中...</span></div>';
+                    if (wan.isp) {
+                        const logo = getISPLogo(wan.isp.isp);
+                        const location = wan.isp.city 
+                            ? `${wan.isp.country || ''} ${wan.isp.region || ''} ${wan.isp.city || ''}` 
+                            : wan.isp.ip || '';
+                        ispHtml = `
+                            <div class="isp-badge">
+                                ${logo}
+                                <span>${wan.isp.isp || '未知'}</span>
+                                <span style="color: var(--text-muted); font-size: 11px;">${location}</span>
+                            </div>
+                        `;
+                    }
                     
                     return `
-                        <div class="wan-card ${wan.connected ? '' : 'disconnected'}">
+                        <div class="wan-card">
                             <div class="wan-header">
-                                <span class="wan-name">${wan.label || wan.name}</span>
-                                <span class="wan-status ${wan.connected ? 'online' : 'offline'}">
-                                    ${wan.connected ? '在线' : '离线'}
-                                </span>
+                                <div>
+                                    <div class="wan-name">${wan.label || wan.name}</div>
+                                    <div class="wan-label">${wan.interface}</div>
+                                </div>
+                                <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+                                    <span class="status-badge ${wan.connected ? 'online' : 'offline'}">
+                                        ${wan.connected ? '在线' : '离线'}
+                                    </span>
+                                    ${ispHtml}
+                                </div>
                             </div>
+                            
+                            <div class="speed-grid">
+                                <div class="speed-box">
+                                    <div class="speed-label">下载</div>
+                                    <div class="speed-value download">
+                                        ${rxSpeed.value}<span class="unit">${rxSpeed.unit}</span>
+                                    </div>
+                                </div>
+                                <div class="speed-box">
+                                    <div class="speed-label">上传</div>
+                                    <div class="speed-value upload">
+                                        ${txSpeed.value}<span class="unit">${txSpeed.unit}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mini-chart">
+                                <div class="chart-line" style="background: linear-gradient(to top, rgba(40, 167, 69, 0.1), transparent);"></div>
+                            </div>
+                            
                             <div class="wan-stats">
-                                <div class="stat-item">
-                                    <div class="stat-label">下载速率</div>
-                                    <div class="stat-value download">${formatSpeed(wan.rx_speed || 0)}</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">上传速率</div>
-                                    <div class="stat-value upload">${formatSpeed(wan.tx_speed || 0)}</div>
-                                </div>
                                 <div class="stat-item">
                                     <div class="stat-label">累计下载</div>
                                     <div class="stat-value">${formatBytes(wan.rx_bytes || 0)}</div>
@@ -448,57 +1327,197 @@
                                     <div class="stat-label">累计上传</div>
                                     <div class="stat-value">${formatBytes(wan.tx_bytes || 0)}</div>
                                 </div>
+                                <div class="stat-item">
+                                    <div class="stat-label">延迟</div>
+                                    <div class="stat-value">-- ms</div>
+                                </div>
+                            </div>
+                            
+                            <div class="network-info">
+                                <div class="info-row">
+                                    <span class="info-label">IPv4</span>
+                                    <span class="info-value">--</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">IPv6</span>
+                                    <span class="info-value">--</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">DNS</span>
+                                    <span class="info-value">--</span>
+                                </div>
+                            </div>
+                            
+                            <div class="latency-grid">
+                                <div class="latency-item">
+                                    <div class="latency-header">
+                                        <span class="latency-name">Baidu</span>
+                                        <span class="latency-value">-- ms</span>
+                                    </div>
+                                    <div class="latency-bars">
+                                        <div class="latency-bar" style="height: 40%;"></div>
+                                        <div class="latency-bar" style="height: 50%;"></div>
+                                        <div class="latency-bar" style="height: 45%;"></div>
+                                        <div class="latency-bar" style="height: 55%;"></div>
+                                        <div class="latency-bar" style="height: 50%;"></div>
+                                    </div>
+                                </div>
+                                <div class="latency-item">
+                                    <div class="latency-header">
+                                        <span class="latency-name">Cloudflare</span>
+                                        <span class="latency-value">-- ms</span>
+                                    </div>
+                                    <div class="latency-bars">
+                                        <div class="latency-bar" style="height: 30%;"></div>
+                                        <div class="latency-bar" style="height: 35%;"></div>
+                                        <div class="latency-bar" style="height: 40%;"></div>
+                                        <div class="latency-bar" style="height: 35%;"></div>
+                                        <div class="latency-bar" style="height: 30%;"></div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     `;
                 }).join('');
-                
-                document.getElementById('totalRx').textContent = formatSpeed(totalRx);
-                document.getElementById('totalTx').textContent = formatSpeed(totalTx);
             } catch (e) {
-                console.error('加载 WAN 状态失败:', e);
+                console.error('Load WAN status failed:', e);
             }
         }
         
-        // 加载客户端列表
         async function loadClients() {
             try {
                 const res = await fetch('/api/v1/clients');
                 const data = await res.json();
                 
-                document.getElementById('clientCount').textContent = data.length + ' 台';
-                
                 const tbody = document.getElementById('clientTable');
                 if (data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px;color:#666;">暂无在线客户端</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无在线客户端</td></tr>';
                     return;
                 }
                 
                 tbody.innerHTML = data.map(client => {
                     const signal = client.signal || 0;
-                    const percent = signalToPercent(signal);
                     const sClass = signalClass(signal);
                     const bandClass = client.band === '5G' ? 'band-5g' : 'band-24g';
                     
                     return `
                         <tr>
-                            <td class="client-name">${client.name || '-'}</td>
+                            <td>${client.name || '-'}</td>
                             <td>${client.ip || '-'}</td>
-                            <td class="client-mac">${client.mac || '-'}</td>
+                            <td style="font-family: monospace; color: var(--text-muted);">${client.mac || '-'}</td>
                             <td><span class="band-badge ${bandClass}">${client.band || '-'}</span></td>
                             <td>
-                                <span class="signal-bar"><span class="signal-fill ${sClass}" style="width:${percent}%"></span></span>
-                                ${signal} dBm
+                                <div class="signal-bar">
+                                    <div class="signal-meter">
+                                        <div class="signal-bar-item ${sClass}"></div>
+                                        <div class="signal-bar-item ${sClass}"></div>
+                                        <div class="signal-bar-item ${sClass}"></div>
+                                        <div class="signal-bar-item ${sClass}"></div>
+                                    </div>
+                                    <span style="color: var(--text-muted);">${signal} dBm</span>
+                                </div>
                             </td>
                         </tr>
                     `;
                 }).join('');
             } catch (e) {
-                console.error('加载客户端失败:', e);
+                console.error('Load clients failed:', e);
             }
         }
         
-        // 加载路由状态
+        let currentSubTab = 'ip';
+        let selectedApps = [];
+        
+        const appCatalog = {
+            'Web': ['http', 'https'],
+            '基础服务': ['dns'],
+            '远程管理': ['ssh', 'rdp', 'vnc', 'telnet'],
+            '即时通讯': ['wechat', 'qq', 'whatsapp', 'telegram', 'skype'],
+            '视频': ['douyin', 'bilibili', 'netflix', 'youtube', 'tiktok', 'youku', 'iqiyi', 'tencent'],
+            '游戏': ['steam', 'epic', 'lol', 'valorant', 'csgo'],
+            '社交': ['weibo', 'zhihu', 'xiaohongshu'],
+            '购物': ['taobao', 'jd', 'pdd'],
+            '云服务': ['aliyun', 'tencent_cloud', 'huaweicloud'],
+            'P2P': ['torrent', 'thunder', 'edonkey']
+        };
+        
+        const appNames = {
+            'http': 'HTTP', 'https': 'HTTPS', 'dns': 'DNS',
+            'ssh': 'SSH', 'rdp': 'RDP', 'vnc': 'VNC', 'telnet': 'Telnet',
+            'wechat': '微信', 'qq': 'QQ', 'whatsapp': 'WhatsApp', 'telegram': 'Telegram', 'skype': 'Skype',
+            'douyin': '抖音', 'bilibili': '哔哩哔哩', 'netflix': 'Netflix', 'youtube': 'YouTube',
+            'tiktok': 'TikTok', 'youku': '优酷', 'iqiyi': '爱奇艺', 'tencent': '腾讯视频',
+            'steam': 'Steam', 'epic': 'Epic', 'lol': '英雄联盟', 'valorant': '无畏契约', 'csgo': 'CS:GO',
+            'weibo': '微博', 'zhihu': '知乎', 'xiaohongshu': '小红书',
+            'taobao': '淘宝', 'jd': '京东', 'pdd': '拼多多',
+            'aliyun': '阿里云', 'tencent_cloud': '腾讯云', 'huaweicloud': '华为云',
+            'torrent': 'BitTorrent', 'thunder': '迅雷', 'edonkey': '电驴'
+        };
+        
+        function switchSubTab(tab) {
+            currentSubTab = tab;
+            document.querySelectorAll('.sub-tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.tab === tab);
+            });
+            document.getElementById('ipRulesPanel').style.display = tab === 'ip' ? 'block' : 'none';
+            document.getElementById('appRulesPanel').style.display = tab === 'app' ? 'block' : 'none';
+            document.getElementById('mwan3RulesPanel').style.display = tab === 'mwan3' ? 'block' : 'none';
+        }
+        
+        function initAppSelector() {
+            const selector = document.getElementById('appSelector');
+            let html = '';
+            for (const [category, apps] of Object.entries(appCatalog)) {
+                html += `<div class="app-category">${category}</div>`;
+                html += '<div class="app-list">';
+                for (const app of apps) {
+                    const isSelected = selectedApps.includes(app);
+                    html += `<span class="app-chip ${isSelected ? 'selected' : ''}" onclick="toggleApp('${app}')">${appNames[app] || app}</span>`;
+                }
+                html += '</div>';
+            }
+            selector.innerHTML = html;
+            updateSelectedAppsDisplay();
+        }
+        
+        function toggleApp(app) {
+            const idx = selectedApps.indexOf(app);
+            if (idx === -1) {
+                selectedApps.push(app);
+            } else {
+                selectedApps.splice(idx, 1);
+            }
+            initAppSelector();
+        }
+        
+        function removeApp(app) {
+            const idx = selectedApps.indexOf(app);
+            if (idx !== -1) {
+                selectedApps.splice(idx, 1);
+            }
+            initAppSelector();
+        }
+        
+        function updateSelectedAppsDisplay() {
+            const container = document.getElementById('selectedApps');
+            if (selectedApps.length === 0) {
+                container.innerHTML = '<span style="font-size: 12px; color: var(--text-muted);">点击下方应用进行选择</span>';
+                return;
+            }
+            container.innerHTML = selectedApps.map(app => 
+                `<span class="selected-app-chip">${appNames[app] || app}<span class="remove" onclick="removeApp('${app}')">×</span></span>`
+            ).join('');
+        }
+        
+        function onRuleTypeChange() {
+            const type = document.getElementById('ruleType').value;
+            document.getElementById('ipGroup').style.display = (type === 'custom' || type === 'isp') ? 'block' : 'none';
+            document.getElementById('appGroup').style.display = type === 'app' ? 'block' : 'none';
+            if (type === 'app') {
+                initAppSelector();
+            }
+        }
+        
         async function loadRouting() {
             try {
                 const res = await fetch('/api/v1/routing');
@@ -514,51 +1533,267 @@
                     toggle.classList.remove('active');
                     label.textContent = '策略路由已关闭';
                 }
+                toggle.classList.remove('loading');
                 
-                document.getElementById('routingStatus').textContent = data.enabled ? '已启用' : '未启用';
-                
-                const ruleList = document.getElementById('ruleList');
-                const rules = data.config?.rules || [];
-                
-                if (rules.length === 0) {
-                    ruleList.innerHTML = '<div style="text-align:center;padding:40px;color:#666;">暂无分流规则</div>';
-                    return;
+                if (data.balance_ratio) {
+                    document.getElementById('wan1Ratio').value = data.balance_ratio.wan1 || 1;
+                    document.getElementById('wan2Ratio').value = data.balance_ratio.wan2 || 1;
                 }
                 
-                ruleList.innerHTML = rules.map(rule => `
-                    <div class="rule-item">
-                        <div class="rule-info">
-                            <div class="rule-name">${rule.name}</div>
-                            <div class="rule-detail">
-                                类型: ${rule.type} | IP 数量: ${rule.ips?.length || 0} | 
-                                状态: ${rule.enabled ? '已启用' : '已禁用'}
-                            </div>
-                        </div>
-                        <span class="rule-wan">${rule.wan}</span>
-                    </div>
-                `).join('');
+                const mwan3Rules = data.mwan3_rules || [];
+                const customRules = data.config?.rules || [];
+                const appRules = customRules.filter(r => r.type === 'app');
+                const ipRules = customRules.filter(r => r.type !== 'app');
+                
+                document.getElementById('mwan3RuleCount').textContent = mwan3Rules.length;
+                document.getElementById('ipRuleCount').textContent = ipRules.length;
+                document.getElementById('appRuleCount').textContent = appRules.length;
+                
+                const mwan3RulesDiv = document.getElementById('mwan3Rules');
+                if (data.mwan3_enabled && mwan3Rules.length > 0) {
+                    mwan3RulesDiv.innerHTML = `
+                        <table class="rule-table">
+                            <thead>
+                                <tr>
+                                    <th>规则名称</th>
+                                    <th>目标 WAN</th>
+                                    <th>类型</th>
+                                    <th>IP/CIDR</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${mwan3Rules.map(rule => `
+                                    <tr>
+                                        <td>${rule.name || '-'}</td>
+                                        <td><span class="rule-wan">${rule.wan || '-'}</span></td>
+                                        <td><span class="rule-type-badge mwan3">mwan3</span></td>
+                                        <td style="font-family: monospace; color: var(--text-muted); font-size: 12px;">
+                                            ${rule.ips ? rule.ips.join(', ') : '-'}
+                                        </td>
+                                        <td>${rule.enabled ? '已启用' : '已禁用'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                } else {
+                    mwan3RulesDiv.innerHTML = '<div class="empty-state">暂无 mwan3 转发规则</div>';
+                }
+                
+                const customRulesDiv = document.getElementById('customRules');
+                if (ipRules.length > 0) {
+                    customRulesDiv.innerHTML = `
+                        <table class="rule-table">
+                            <thead>
+                                <tr>
+                                    <th>规则名称</th>
+                                    <th>目标 WAN</th>
+                                    <th>类型</th>
+                                    <th>IP/CIDR</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${ipRules.map(rule => `
+                                    <tr>
+                                        <td>${rule.name || '-'}</td>
+                                        <td><span class="rule-wan">${rule.wan || '-'}</span></td>
+                                        <td><span class="rule-type-badge ${rule.type || 'custom'}">${rule.type === 'isp' ? '运营商' : '自定义'}</span></td>
+                                        <td style="font-family: monospace; color: var(--text-muted); font-size: 12px;">
+                                            ${rule.ips ? rule.ips.length + ' 个' : '0'}
+                                        </td>
+                                        <td>${rule.enabled ? '已启用' : '已禁用'}</td>
+                                        <td>
+                                            <button class="btn btn-secondary" onclick="editRule('${rule.name}')">编辑</button>
+                                            <button class="btn btn-danger" onclick="deleteRule('${rule.name}')">删除</button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                } else {
+                    customRulesDiv.innerHTML = '<div class="empty-state">暂无 IP 分流规则</div>';
+                }
+                
+                const appRulesDiv = document.getElementById('appRules');
+                if (appRules.length > 0) {
+                    appRulesDiv.innerHTML = `
+                        <table class="rule-table">
+                            <thead>
+                                <tr>
+                                    <th>规则名称</th>
+                                    <th>目标 WAN</th>
+                                    <th>应用数量</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${appRules.map(rule => `
+                                    <tr>
+                                        <td>${rule.name || '-'}</td>
+                                        <td><span class="rule-wan">${rule.wan || '-'}</span></td>
+                                        <td>${rule.apps ? rule.apps.length : (rule.ips ? rule.ips.length : 0)} 个</td>
+                                        <td>${rule.enabled ? '已启用' : '已禁用'}</td>
+                                        <td>
+                                            <button class="btn btn-secondary" onclick="editRule('${rule.name}')">编辑</button>
+                                            <button class="btn btn-danger" onclick="deleteRule('${rule.name}')">删除</button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                }
             } catch (e) {
-                console.error('加载路由状态失败:', e);
+                console.error('Load routing failed:', e);
             }
         }
         
-        // 切换路由（占位）
         function toggleRouting() {
-            alert('路由开关功能待实现，请编辑 routing.toml 配置文件');
+            const toggle = document.getElementById('routingToggle');
+            const label = document.getElementById('routingLabel');
+            
+            if (toggle.classList.contains('loading')) return;
+            
+            toggle.classList.add('loading');
+            label.textContent = '切换中...';
+            
+            const enabled = !toggle.classList.contains('active');
+            
+            fetch('/api/v1/routing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled })
+            }).then(res => res.json()).then(data => {
+                if (enabled) {
+                    toggle.classList.add('active');
+                    label.textContent = '策略路由已启用';
+                } else {
+                    toggle.classList.remove('active');
+                    label.textContent = '策略路由已关闭';
+                }
+                showToast(data.message || (enabled ? '策略路由已启用' : '策略路由已关闭'), 'success');
+            }).catch(err => {
+                label.textContent = toggle.classList.contains('active') ? '策略路由已启用' : '策略路由已关闭';
+                showToast('操作失败，请稍后重试', 'error');
+            }).finally(() => {
+                toggle.classList.remove('loading');
+            });
         }
         
-        // 初始化
+        function openAddRuleModal() {
+            document.getElementById('modalTitle').textContent = '添加规则';
+            document.getElementById('ruleId').value = '';
+            document.getElementById('ruleName').value = '';
+            document.getElementById('ruleWAN').value = 'wan1';
+            document.getElementById('ruleType').value = 'custom';
+            document.getElementById('ruleIPs').value = '';
+            document.getElementById('ruleEnabled').checked = true;
+            selectedApps = [];
+            onRuleTypeChange();
+            document.getElementById('ruleModal').style.display = 'flex';
+        }
+        
+        function closeRuleModal() {
+            document.getElementById('ruleModal').style.display = 'none';
+        }
+        
+        function editRule(name) {
+            fetch('/api/v1/routing').then(res => res.json()).then(data => {
+                const rules = data.config?.rules || [];
+                const rule = rules.find(r => r.name === name);
+                
+                if (rule) {
+                    document.getElementById('modalTitle').textContent = '编辑规则';
+                    document.getElementById('ruleId').value = rule.name;
+                    document.getElementById('ruleName').value = rule.name;
+                    document.getElementById('ruleWAN').value = rule.wan || 'wan1';
+                    document.getElementById('ruleType').value = rule.type || 'custom';
+                    document.getElementById('ruleIPs').value = rule.ips ? rule.ips.join('\n') : '';
+                    document.getElementById('ruleEnabled').checked = rule.enabled;
+                    selectedApps = rule.apps || [];
+                    onRuleTypeChange();
+                    document.getElementById('ruleModal').style.display = 'flex';
+                }
+            });
+        }
+        
+        function deleteRule(name) {
+            if (!confirm(`确定要删除规则 "${name}" 吗？`)) return;
+            
+            fetch(`/api/v1/routing?name=${encodeURIComponent(name)}`, {
+                method: 'DELETE'
+            }).then(res => res.json()).then(data => {
+                showToast(data.message || '删除成功', 'success');
+                loadRouting();
+            }).catch(err => {
+                showToast('删除失败，请稍后重试', 'error');
+            });
+        }
+        
+        function submitRule(event) {
+            event.preventDefault();
+            
+            const id = document.getElementById('ruleId').value;
+            const type = document.getElementById('ruleType').value;
+            const submitBtn = document.getElementById('submitBtn');
+            
+            const rule = {
+                name: document.getElementById('ruleName').value,
+                wan: document.getElementById('ruleWAN').value,
+                type: type,
+                ips: type === 'app' ? [] : document.getElementById('ruleIPs').value.split('\n').map(s => s.trim()).filter(s => s),
+                apps: type === 'app' ? selectedApps : [],
+                enabled: document.getElementById('ruleEnabled').checked
+            };
+            
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="loading-inline"></span>保存中...';
+            
+            const method = id ? 'PUT' : 'POST';
+            const url = id ? `/api/v1/routing?name=${encodeURIComponent(id)}` : '/api/v1/routing';
+            
+            fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(rule)
+            }).then(res => res.json()).then(data => {
+                showToast(data.message || (id ? '更新成功' : '添加成功'), 'success');
+                closeRuleModal();
+                loadRouting();
+            }).catch(err => {
+                showToast('操作失败，请稍后重试', 'error');
+            }).finally(() => {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            });
+        }
+        
+        function showToast(message, type) {
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.remove();
+            }, 3000);
+        }
+        
         async function init() {
             await Promise.all([loadWANStatus(), loadClients(), loadRouting()]);
         }
         
-        // 定时刷新
         setInterval(async () => {
             await loadWANStatus();
             await loadClients();
         }, 3000);
         
-        // 启动
         init();
     </script>
 </body>
