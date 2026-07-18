@@ -495,6 +495,11 @@
             color: var(--warning);
         }
         
+        .band-badge.band-wired {
+            background: rgba(88, 96, 105, 0.1);
+            color: var(--text-secondary);
+        }
+        
         .signal-bar {
             display: inline-flex;
             align-items: center;
@@ -1071,7 +1076,7 @@
                             <th>设备名称</th>
                             <th>IP 地址</th>
                             <th>MAC 地址</th>
-                            <th>频段</th>
+                            <th>连接方式</th>
                             <th>信号强度</th>
                         </tr>
                     </thead>
@@ -1270,6 +1275,91 @@
             }
         }
         
+        function renderMiniChart(rxHistory, txHistory) {
+            const rxMax = rxHistory.length > 0 ? Math.max(...rxHistory) : 1;
+            const txMax = txHistory.length > 0 ? Math.max(...txHistory) : 1;
+            const maxVal = Math.max(rxMax, txMax, 1);
+            
+            let rxPoints = '';
+            if (rxHistory.length > 0) {
+                const step = 100 / (rxHistory.length - 1);
+                rxPoints = rxHistory.map((v, i) => {
+                    const x = i * step;
+                    const y = 100 - (v / maxVal * 100);
+                    return `${x},${y}`;
+                }).join(' ');
+            }
+            
+            let txPoints = '';
+            if (txHistory.length > 0) {
+                const step = 100 / (txHistory.length - 1);
+                txPoints = txHistory.map((v, i) => {
+                    const x = i * step;
+                    const y = 100 - (v / maxVal * 100);
+                    return `${x},${y}`;
+                }).join(' ');
+            }
+            
+            return `
+                <div class="mini-chart">
+                    <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;">
+                        ${rxPoints ? `<polyline fill="rgba(40, 167, 69, 0.1)" stroke="#28a745" stroke-width="2" points="${rxPoints} 100,0 100,100" />` : ''}
+                        ${rxPoints ? `<polyline fill="none" stroke="#28a745" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="${rxPoints}" />` : ''}
+                        ${txPoints ? `<polyline fill="rgba(3, 102, 214, 0.1)" stroke="#0366d6" stroke-width="2" points="${txPoints} 100,0 100,100" />` : ''}
+                        ${txPoints ? `<polyline fill="none" stroke="#0366d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="${txPoints}" />` : ''}
+                    </svg>
+                </div>
+            `;
+        }
+        
+        function renderLatencyGrid(latencies) {
+            const latencyMap = {};
+            if (latencies) {
+                latencies.forEach(l => {
+                    latencyMap[l.target] = l.latency;
+                });
+            }
+            
+            const baiduLat = latencyMap['baidu'] !== undefined ? latencyMap['baidu'] : -1;
+            const cfLat = latencyMap['cloudflare'] !== undefined ? latencyMap['cloudflare'] : -1;
+            
+            const getLatencyClass = (lat) => {
+                if (lat < 0) return '';
+                if (lat < 50) return '';
+                if (lat < 100) return 'high';
+                return 'critical';
+            };
+            
+            return `
+                <div class="latency-grid">
+                    <div class="latency-item">
+                        <div class="latency-header">
+                            <span class="latency-name">Baidu</span>
+                            <span class="latency-value ${getLatencyClass(baiduLat)}">${baiduLat >= 0 ? baiduLat + ' ms' : '-- ms'}</span>
+                        </div>
+                        <div class="latency-bars">
+                            ${[baiduLat, baiduLat, baiduLat, baiduLat, baiduLat].map(lat => {
+                                const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
+                                return `<div class="latency-bar ${getLatencyClass(lat)}" style="height: ${h}%;"></div>`;
+                            }).join('')}
+                        </div>
+                    </div>
+                    <div class="latency-item">
+                        <div class="latency-header">
+                            <span class="latency-name">Cloudflare</span>
+                            <span class="latency-value ${getLatencyClass(cfLat)}">${cfLat >= 0 ? cfLat + ' ms' : '-- ms'}</span>
+                        </div>
+                        <div class="latency-bars">
+                            ${[cfLat, cfLat, cfLat, cfLat, cfLat].map(lat => {
+                                const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
+                                return `<div class="latency-bar ${getLatencyClass(lat)}" style="height: ${h}%;"></div>`;
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
         async function loadWANStatus() {
             try {
                 const res = await fetch('/api/v1/wan');
@@ -1281,8 +1371,10 @@
                     const rxSpeed = formatSpeed(wan.rx_speed || 0);
                     const txSpeed = formatSpeed(wan.tx_speed || 0);
                     
-                    let ispHtml = '<div class="isp-badge"><span>检测中...</span></div>';
-                    if (wan.isp) {
+                    const displayName = (wan.name || 'WAN').toUpperCase();
+                    
+                    let ispHtml = '';
+                    if (wan.isp && wan.isp.isp) {
                         const logo = getISPLogo(wan.isp.isp);
                         const location = wan.isp.city 
                             ? `${wan.isp.country || ''} ${wan.isp.region || ''} ${wan.isp.city || ''}` 
@@ -1290,14 +1382,14 @@
                         ispHtml = `
                             <div class="isp-badge">
                                 ${logo}
-                                <span>${wan.isp.isp || '未知'}</span>
+                                <span>${wan.isp.isp}</span>
                                 <span style="color: var(--text-muted); font-size: 11px;">${location}</span>
                             </div>
                         `;
                     }
                     
-                    // 确保标题只显示 WAN1/WAN2，不包含运营商信息
-                    const displayName = (wan.label || wan.name || 'WAN').toUpperCase();
+                    const chartHtml = renderMiniChart(wan.rx_history || [], wan.tx_history || []);
+                    const latencyGridHtml = renderLatencyGrid(wan.latencies || []);
                     
                     return `
                         <div class="wan-card">
@@ -1329,9 +1421,7 @@
                                 </div>
                             </div>
                             
-                            <div class="mini-chart">
-                                <div class="chart-line" style="background: linear-gradient(to top, rgba(40, 167, 69, 0.1), transparent);"></div>
-                            </div>
+                            ${chartHtml}
                             
                             <div class="wan-stats">
                                 <div class="stat-item">
@@ -1363,34 +1453,7 @@
                                 </div>
                             </div>
                             
-                            <div class="latency-grid">
-                                <div class="latency-item">
-                                    <div class="latency-header">
-                                        <span class="latency-name">Baidu</span>
-                                        <span class="latency-value">-- ms</span>
-                                    </div>
-                                    <div class="latency-bars">
-                                        <div class="latency-bar" style="height: 40%;"></div>
-                                        <div class="latency-bar" style="height: 50%;"></div>
-                                        <div class="latency-bar" style="height: 45%;"></div>
-                                        <div class="latency-bar" style="height: 55%;"></div>
-                                        <div class="latency-bar" style="height: 50%;"></div>
-                                    </div>
-                                </div>
-                                <div class="latency-item">
-                                    <div class="latency-header">
-                                        <span class="latency-name">Cloudflare</span>
-                                        <span class="latency-value">-- ms</span>
-                                    </div>
-                                    <div class="latency-bars">
-                                        <div class="latency-bar" style="height: 30%;"></div>
-                                        <div class="latency-bar" style="height: 35%;"></div>
-                                        <div class="latency-bar" style="height: 40%;"></div>
-                                        <div class="latency-bar" style="height: 35%;"></div>
-                                        <div class="latency-bar" style="height: 30%;"></div>
-                                    </div>
-                                </div>
-                            </div>
+                            ${latencyGridHtml}
                         </div>
                     `;
                 }).join('');
@@ -1413,25 +1476,41 @@
                 tbody.innerHTML = data.map(client => {
                     const signal = client.signal || 0;
                     const sClass = signalClass(signal);
-                    const bandClass = client.band === '5G' ? 'band-5g' : 'band-24g';
+                    
+                    // 连接方式：有线客户端显示"有线"，WiFi 客户端显示频段
+                    let connBadge = '';
+                    if (client.conn_type === 'wired' || (!client.band && !client.ssid)) {
+                        connBadge = '<span class="band-badge band-wired">有线</span>';
+                    } else {
+                        const bandClass = client.band === '5G' ? 'band-5g' : 'band-24g';
+                        connBadge = `<span class="band-badge ${bandClass}">${client.band || 'WiFi'}</span>`;
+                    }
+                    
+                    // 有线客户端不显示信号强度
+                    let signalHtml = '';
+                    if (client.conn_type === 'wired' || (!client.band && !client.ssid)) {
+                        signalHtml = '<span style="color: var(--text-muted);">--</span>';
+                    } else {
+                        signalHtml = `
+                            <div class="signal-bar">
+                                <div class="signal-meter">
+                                    <div class="signal-bar-item ${sClass}"></div>
+                                    <div class="signal-bar-item ${sClass}"></div>
+                                    <div class="signal-bar-item ${sClass}"></div>
+                                    <div class="signal-bar-item ${sClass}"></div>
+                                </div>
+                                <span style="color: var(--text-muted);">${signal} dBm</span>
+                            </div>
+                        `;
+                    }
                     
                     return `
                         <tr>
                             <td>${client.name || '-'}</td>
                             <td>${client.ip || '-'}</td>
                             <td style="font-family: monospace; color: var(--text-muted);">${client.mac || '-'}</td>
-                            <td><span class="band-badge ${bandClass}">${client.band || '-'}</span></td>
-                            <td>
-                                <div class="signal-bar">
-                                    <div class="signal-meter">
-                                        <div class="signal-bar-item ${sClass}"></div>
-                                        <div class="signal-bar-item ${sClass}"></div>
-                                        <div class="signal-bar-item ${sClass}"></div>
-                                        <div class="signal-bar-item ${sClass}"></div>
-                                    </div>
-                                    <span style="color: var(--text-muted);">${signal} dBm</span>
-                                </div>
-                            </td>
+                            <td>${connBadge}</td>
+                            <td>${signalHtml}</td>
                         </tr>
                     `;
                 }).join('');
@@ -1551,8 +1630,8 @@
                 toggle.classList.remove('loading');
                 
                 if (data.balance_ratio) {
-                    document.getElementById('wan1Ratio').value = data.balance_ratio.wan1 || 1;
-                    document.getElementById('wan2Ratio').value = data.balance_ratio.wan2 || 1;
+                    document.getElementById('wan1Ratio').textContent = data.balance_ratio.wan1 || 1;
+                    document.getElementById('wan2Ratio').textContent = data.balance_ratio.wan2 || 1;
                 }
                 
                 const mwan3Rules = data.mwan3_rules || [];

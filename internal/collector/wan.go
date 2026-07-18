@@ -12,31 +12,43 @@ import (
 	"github.com/Wooo0/wan-manager/internal/isp"
 )
 
+// LatencyResult 延迟测试结果
+type LatencyResult struct {
+	Target   string `json:"target"`
+	Latency  int    `json:"latency"`
+}
+
 // WANStats WAN 口统计数据
 type WANStats struct {
-	Name      string  `json:"name"`
-	Label     string  `json:"label"`
-	Interface string  `json:"interface"`
-	RxBytes   uint64  `json:"rx_bytes"`
-	TxBytes   uint64  `json:"tx_bytes"`
-	RxSpeed   float64 `json:"rx_speed"`
-	TxSpeed   float64 `json:"tx_speed"`
-	Connected bool    `json:"connected"`
-	IPv4      string  `json:"ipv4,omitempty"`
-	IPv6      string  `json:"ipv6,omitempty"`
-	DNS       string  `json:"dns,omitempty"`
-	Latency   int     `json:"latency,omitempty"`  // 延迟（毫秒）
-	ISP       *isp.Info `json:"isp,omitempty"`
+	Name      string          `json:"name"`
+	Label     string          `json:"label"`
+	Interface string          `json:"interface"`
+	RxBytes   uint64          `json:"rx_bytes"`
+	TxBytes   uint64          `json:"tx_bytes"`
+	RxSpeed   float64         `json:"rx_speed"`
+	TxSpeed   float64         `json:"tx_speed"`
+	Connected bool            `json:"connected"`
+	IPv4      string          `json:"ipv4,omitempty"`
+	IPv6      string          `json:"ipv6,omitempty"`
+	DNS       string          `json:"dns,omitempty"`
+	Latency   int             `json:"latency,omitempty"`
+	Latencies []LatencyResult `json:"latencies,omitempty"`
+	ISP       *isp.Info       `json:"isp,omitempty"`
+	RxHistory []float64       `json:"rx_history,omitempty"`
+	TxHistory []float64       `json:"tx_history,omitempty"`
 }
 
 // WANCollector WAN 采集器
 type WANCollector struct {
-	wanConfigs []config.WANConfig
-	interval   time.Duration
-	mu         sync.RWMutex
-	stats      []WANStats
-	prevData   map[string]wanPrevData
-	ispDetector *isp.Detector
+	wanConfigs   []config.WANConfig
+	interval     time.Duration
+	mu           sync.RWMutex
+	stats        []WANStats
+	prevData     map[string]wanPrevData
+	ispDetector  *isp.Detector
+	rxHistory    map[string][]float64
+	txHistory    map[string][]float64
+	historySize  int
 }
 
 type wanPrevData struct {
@@ -48,10 +60,13 @@ type wanPrevData struct {
 // NewWANCollector 创建 WAN 采集器
 func NewWANCollector(wans []config.WANConfig, interval int) *WANCollector {
 	return &WANCollector{
-		wanConfigs: wans,
-		interval:   time.Duration(interval) * time.Second,
-		prevData:   make(map[string]wanPrevData),
+		wanConfigs:  wans,
+		interval:    time.Duration(interval) * time.Second,
+		prevData:    make(map[string]wanPrevData),
 		ispDetector: isp.NewDetector(),
+		rxHistory:   make(map[string][]float64),
+		txHistory:   make(map[string][]float64),
+		historySize: 20,
 	}
 }
 
@@ -105,11 +120,15 @@ func (w *WANCollector) collect() {
 			s.RxSpeed = mockData.rxSpeed
 			s.TxSpeed = mockData.txSpeed
 			s.Connected = true
-			// Mock ISP 信息
 			s.ISP = mockData.isp
-			// Mock IP 和延迟
 			s.IPv4 = mockData.isp.IP
 			s.Latency = 15
+			s.Latencies = []LatencyResult{
+				{Target: "baidu", Latency: 12 + now.Second()%8},
+				{Target: "cloudflare", Latency: 28 + now.Second()%10},
+			}
+			s.RxHistory = w.getMockHistory(wc.Name, "rx", now)
+			s.TxHistory = w.getMockHistory(wc.Name, "tx", now)
 		} else {
 			prev, hasPrev := w.prevData[wc.Interface]
 			if hasPrev && !prev.timestamp.IsZero() {
@@ -125,13 +144,22 @@ func (w *WANCollector) collect() {
 			}
 			s.Connected = s.RxBytes > 0 || s.TxBytes > 0
 			
-			// 获取 IP 地址
 			s.IPv4, s.IPv6 = getInterfaceIP(wc.Interface)
+			s.DNS = getInterfaceDNS(wc.Interface)
 			
-			// 测试延迟（使用 114.114.114.114 作为目标）
 			if s.Connected {
-				s.Latency = pingLatency("114.114.114.114")
+				s.ISP = w.ispDetector.Detect(wc.Interface)
+				s.Latencies = pingMultiple([]string{"114.114.114.114", "www.baidu.com", "1.1.1.1"}, wc.Interface)
+				if len(s.Latencies) > 0 && s.Latencies[0].Latency >= 0 {
+					s.Latency = s.Latencies[0].Latency
+				} else {
+					s.Latency = -1
+				}
 			}
+
+			w.updateHistory(wc.Interface, s.RxSpeed, s.TxSpeed)
+			s.RxHistory = w.rxHistory[wc.Interface]
+			s.TxHistory = w.txHistory[wc.Interface]
 		}
 
 		stats = append(stats, s)
@@ -148,6 +176,21 @@ func (w *WANCollector) collect() {
 	w.mu.Unlock()
 }
 
+func (w *WANCollector) updateHistory(iface string, rxSpeed, txSpeed float64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.rxHistory[iface] = append(w.rxHistory[iface], rxSpeed)
+	if len(w.rxHistory[iface]) > w.historySize {
+		w.rxHistory[iface] = w.rxHistory[iface][1:]
+	}
+
+	w.txHistory[iface] = append(w.txHistory[iface], txSpeed)
+	if len(w.txHistory[iface]) > w.historySize {
+		w.txHistory[iface] = w.txHistory[iface][1:]
+	}
+}
+
 type mockWANData struct {
 	rxBytes uint64
 	txBytes uint64
@@ -157,16 +200,15 @@ type mockWANData struct {
 }
 
 func (w *WANCollector) getMockData(name string, now time.Time) mockWANData {
-	// 模拟不同的流量模式
-	baseRx := uint64(1000000000) // 1GB
-	baseTx := uint64(500000000)  // 500MB
+	baseRx := uint64(1000000000)
+	baseTx := uint64(500000000)
 	
 	if name == "wan1" {
 		return mockWANData{
 			rxBytes: baseRx + uint64(now.Second())*1000000,
 			txBytes: baseTx + uint64(now.Second())*500000,
-			rxSpeed: 5000000 + float64(now.Second()%10)*100000, // 5MB/s + 波动
-			txSpeed: 2000000 + float64(now.Second()%10)*50000,  // 2MB/s + 波动
+			rxSpeed: 5000000 + float64(now.Second()%10)*100000,
+			txSpeed: 2000000 + float64(now.Second()%10)*50000,
 			isp: &isp.Info{
 				ISP:     "电信",
 				Country: "中国",
@@ -180,8 +222,8 @@ func (w *WANCollector) getMockData(name string, now time.Time) mockWANData {
 	return mockWANData{
 		rxBytes: baseRx/2 + uint64(now.Second())*500000,
 		txBytes: baseTx/2 + uint64(now.Second())*250000,
-		rxSpeed: 1000000 + float64(now.Second()%10)*50000,  // 1MB/s + 波动
-		txSpeed: 500000 + float64(now.Second()%10)*25000,   // 500KB/s + 波动
+		rxSpeed: 1000000 + float64(now.Second()%10)*50000,
+		txSpeed: 500000 + float64(now.Second()%10)*25000,
 		isp: &isp.Info{
 			ISP:     "联通",
 			Country: "中国",
@@ -190,6 +232,23 @@ func (w *WANCollector) getMockData(name string, now time.Time) mockWANData {
 			IP:      "103.172.41.169",
 		},
 	}
+}
+
+func (w *WANCollector) getMockHistory(name string, direction string, now time.Time) []float64 {
+	var result []float64
+	base := 5000000.0
+	if name == "wan2" {
+		base = 1000000.0
+	}
+	if direction == "tx" {
+		base = base / 2.5
+	}
+	
+	for i := 0; i < w.historySize; i++ {
+		offset := (now.Second() + i) % 10
+		result = append(result, base+float64(offset)*100000)
+	}
+	return result
 }
 
 func readUint64(path string) (uint64, error) {
@@ -235,19 +294,22 @@ func getInterfaceIP(iface string) (ipv4, ipv6 string) {
 	return ipv4, ipv6
 }
 
-// pingLatency 测试到目标地址的延迟（毫秒）
-func pingLatency(target string) int {
-	cmd := exec.Command("ping", "-c", "1", "-W", "2", target)
+// pingLatency 测试到目标地址的延迟（毫秒），iface 指定绑定接口
+func pingLatency(target, iface string) int {
+	args := []string{"-c", "1", "-W", "2"}
+	if iface != "" {
+		args = append(args, "-I", iface)
+	}
+	args = append(args, target)
+	cmd := exec.Command("ping", args...)
 	output, err := cmd.Output()
 	if err != nil {
 		return -1
 	}
 	
-	// 解析 ping 输出，查找 time=XX.XX ms
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		if strings.Contains(line, "time=") {
-			// 例如：64 bytes from 114.114.114.114: icmp_seq=1 ttl=128 time=12.3 ms
 			parts := strings.Split(line, "time=")
 			if len(parts) >= 2 {
 				timeStr := strings.Split(parts[1], " ")[0]
@@ -260,4 +322,70 @@ func pingLatency(target string) int {
 	}
 	
 	return -1
+}
+
+// pingMultiple 并行测试多个目标的延迟，iface 指定绑定接口
+func pingMultiple(targets []string, iface string) []LatencyResult {
+	type result struct {
+		target  string
+		latency int
+	}
+	
+	ch := make(chan result, len(targets))
+	
+	for _, t := range targets {
+		go func(target string) {
+			ch <- result{target: target, latency: pingLatency(target, iface)}
+		}(t)
+	}
+	
+	var results []LatencyResult
+	for i := 0; i < len(targets); i++ {
+		r := <-ch
+		name := r.target
+		if name == "www.baidu.com" {
+			name = "baidu"
+		} else if name == "1.1.1.1" {
+			name = "cloudflare"
+		} else if name == "114.114.114.114" {
+			name = "default"
+		}
+		results = append(results, LatencyResult{Target: name, Latency: r.latency})
+	}
+	
+	return results
+}
+
+// getInterfaceDNS 获取系统 DNS 服务器
+func getInterfaceDNS(iface string) string {
+	// OpenWrt 的 DNS 配置文件
+	files := []string{
+		"/tmp/resolv.conf.d/resolv.conf.auto",
+		"/tmp/resolv.conf.auto",
+		"/etc/resolv.conf",
+	}
+	
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		
+		var dnsServers []string
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "nameserver") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					dnsServers = append(dnsServers, fields[1])
+				}
+			}
+		}
+		if len(dnsServers) > 0 {
+			return strings.Join(dnsServers, ", ")
+		}
+	}
+	
+	return ""
 }
