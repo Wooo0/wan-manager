@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -22,16 +23,16 @@ type APIHandler struct {
 
 // SummaryResponse 汇总响应
 type SummaryResponse struct {
-	WANS     []collector.WANStats    `json:"wans"`
-	Clients  []collector.ClientInfo  `json:"clients"`
-	Routing  *RoutingStatus          `json:"routing,omitempty"`
-	UpdateAt time.Time               `json:"update_at"`
+	WANS     []collector.WANStats   `json:"wans"`
+	Clients  []collector.ClientInfo `json:"clients"`
+	Routing  *RoutingStatus         `json:"routing,omitempty"`
+	UpdateAt time.Time              `json:"update_at"`
 }
 
 // RoutingStatus 路由状态
 type RoutingStatus struct {
-	Enabled bool             `json:"enabled"`
-	Active  bool             `json:"active"`
+	Enabled bool                   `json:"enabled"`
+	Active  bool                   `json:"active"`
 	Config  *routing.RoutingConfig `json:"config,omitempty"`
 }
 
@@ -49,7 +50,7 @@ func NewAPIHandler(wc *collector.WANCollector, cc *collector.ClientCollector, rm
 func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	// Web 界面
 	mux.HandleFunc("/", h.handleRoot)
-	
+
 	// API 接口
 	mux.HandleFunc("/api/v1/version", h.handleVersion)
 	mux.HandleFunc("/api/v1/summary", h.handleSummary)
@@ -78,7 +79,7 @@ func (h *APIHandler) handleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	
+
 	// 如果请求 JSON，返回 API 信息
 	if r.Header.Get("Accept") == "application/json" {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -95,7 +96,7 @@ func (h *APIHandler) handleRoot(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	
+
 	// 返回 Web 界面
 	html, err := web.IndexHTML()
 	if err != nil {
@@ -178,29 +179,35 @@ func (h *APIHandler) handleGetRouting(w http.ResponseWriter, r *http.Request) {
 	if err == nil && len(mwan3Config.Interfaces) > 0 {
 		result["mwan3_enabled"] = true
 		result["mwan3"] = mwan3Config
-		
+
 		wan1Weight, wan2Weight := routing.GetWAN1WAN2Ratio(mwan3Config)
 		result["balance_ratio"] = map[string]interface{}{
-			"wan1": wan1Weight,
-			"wan2": wan2Weight,
+			"wan1":    wan1Weight,
+			"wan2":    wan2Weight,
 			"display": fmt.Sprintf("%d:%d", wan1Weight, wan2Weight),
 		}
 
+		// 返回所有 mwan3 规则（包括默认策略规则）
+		result["mwan3_rules"] = mwan3Config.Rules
+
+		// 同时返回解析后的自定义规则（用于兼容）
 		ipRules := routing.ParseIPRulesFromMWAN3(mwan3Config)
-		result["mwan3_rules"] = ipRules
+		result["custom_rules"] = ipRules
 	} else {
 		result["mwan3_enabled"] = false
+		result["mwan3_rules"] = []interface{}{}
 	}
 
 	if h.routingManager != nil {
-		cfg := h.routingManager.GetConfig()
-		result["enabled"] = cfg.Enabled
+		// 返回配置深拷贝，避免直接修改管理器持有的共享 config 指针
+		// （无锁并发读写，与 Reload/其他读取构成 data race）。
+		cfgCopy := h.routingManager.GetConfigCopy()
+		result["enabled"] = cfgCopy.Enabled
 		result["active"] = h.routingManager.IsActive()
-		result["config"] = cfg
-		
-		if cfg.MWAN3Config == nil && mwan3Config != nil {
-			cfg.MWAN3Config = mwan3Config
+		if cfgCopy.MWAN3Config == nil && mwan3Config != nil {
+			cfgCopy.MWAN3Config = mwan3Config
 		}
+		result["config"] = cfgCopy
 	}
 
 	json.NewEncoder(w).Encode(result)
@@ -238,7 +245,7 @@ func (h *APIHandler) handlePostRouting(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			cfg := h.routingManager.GetConfig()
+			cfg := h.routingManager.GetConfigCopy()
 			cfg.Enabled = enabled
 
 			if err := h.routingManager.Reload(cfg); err != nil {
@@ -295,7 +302,7 @@ func (h *APIHandler) handlePostRouting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := h.routingManager.GetConfig()
+	cfg := h.routingManager.GetConfigCopy()
 	cfg.Rules = append(cfg.Rules, rule)
 
 	if err := h.routingManager.Reload(cfg); err != nil {
@@ -341,7 +348,7 @@ func (h *APIHandler) handlePutRouting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := h.routingManager.GetConfig()
+	cfg := h.routingManager.GetConfigCopy()
 	found := false
 	for i, rule := range cfg.Rules {
 		if rule.Name == name {
@@ -392,7 +399,7 @@ func (h *APIHandler) handleDeleteRouting(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	cfg := h.routingManager.GetConfig()
+	cfg := h.routingManager.GetConfigCopy()
 	found := false
 	for i, rule := range cfg.Rules {
 		if rule.Name == name {
@@ -516,7 +523,11 @@ func (h *APIHandler) handleEvents(w http.ResponseWriter, r *http.Request) {
 				"clients": h.clientCollector.GetClients(),
 				"time":    time.Now().Unix(),
 			}
-			jsonData, _ := json.Marshal(data)
+			jsonData, err := json.Marshal(data)
+			if err != nil {
+				log.Printf("SSE 序列化失败: %v", err)
+				continue
+			}
 			fmt.Fprintf(w, "data: %s\n\n", jsonData)
 			flusher.Flush()
 		}

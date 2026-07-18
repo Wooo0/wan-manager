@@ -1101,9 +1101,9 @@
     
     <div class="container">
         <div class="tabs">
-            <button class="tab active" onclick="showPage('dashboard')">状态概览</button>
-            <button class="tab" onclick="showPage('clients')">客户端</button>
-            <button class="tab" onclick="showPage('routing')">分流规则</button>
+            <button class="tab active" onclick="showPage('dashboard', this)">状态概览</button>
+            <button class="tab" onclick="showPage('clients', this)">客户端</button>
+            <button class="tab" onclick="showPage('routing', this)">分流规则</button>
         </div>
         
         <div id="dashboard" class="page active">
@@ -1296,11 +1296,11 @@
             return 'weak';
         }
         
-        function showPage(pageId) {
+        function showPage(pageId, el) {
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.getElementById(pageId).classList.add('active');
-            event.target.classList.add('active');
+            if (el) el.classList.add('active');
         }
         
         function getISPLogo(isp) {
@@ -1362,7 +1362,7 @@
                 <div class="speed-chart-container">
                     <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
                         <path d="${fillD}" fill="${fillColor}" />
-                        <path d="${pathD}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="${pathD}" fill="none" stroke="${color}" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                 </div>
             `;
@@ -1370,14 +1370,18 @@
         
         function renderLatencyGrid(latencies, wanName) {
             const latencyMap = {};
+            const historyMap = {};
             if (latencies) {
                 latencies.forEach(l => {
                     latencyMap[l.target] = l.latency;
+                    historyMap[l.target] = l.latencies || [];
                 });
             }
             
             const baiduLat = latencyMap['baidu'] !== undefined ? latencyMap['baidu'] : -1;
+            const baiduHistory = historyMap['baidu'] || [];
             const cfLat = latencyMap['cloudflare'] !== undefined ? latencyMap['cloudflare'] : -1;
+            const cfHistory = historyMap['cloudflare'] || [];
             
             const getLatencyClass = (lat) => {
                 if (lat < 0) return '';
@@ -1386,6 +1390,30 @@
                 return 'critical';
             };
             
+            const renderBars = (history) => {
+                const bars = [];
+                for (let i = 0; i < 5; i++) {
+                    const lat = history[i] !== undefined ? history[i] : -1;
+                    const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
+                    bars.push(`<div class="latency-bar ${getLatencyClass(lat)}" style="height: ${h}%;"></div>`);
+                }
+                return bars.join('');
+            };
+            
+            const calcStats = (history) => {
+                const valid = history.filter(l => l >= 0);
+                if (valid.length === 0) {
+                    return { min: '--', avg: '--', max: '--' };
+                }
+                const min = Math.min(...valid);
+                const max = Math.max(...valid);
+                const avg = Math.round(valid.reduce((a, b) => a + b, 0) / valid.length);
+                return { min, avg, max };
+            };
+            
+            const baiduStats = calcStats(baiduHistory);
+            const cfStats = calcStats(cfHistory);
+            
             return `
                 <div class="latency-grid">
                     <div class="latency-item">
@@ -1393,22 +1421,37 @@
                             <span class="latency-name">Baidu</span>
                             <span class="latency-value ${getLatencyClass(baiduLat)}">${baiduLat >= 0 ? baiduLat + ' ms' : '-- ms'}</span>
                         </div>
+                        <div class="latency-bars">
+                            ${renderBars(baiduHistory)}
+                        </div>
+                        <div class="latency-stats">
+                            <span class="latency-stat"><span class="stat-label">min</span> ${baiduStats.min}ms</span>
+                            <span class="latency-stat"><span class="stat-label">avg</span> ${baiduStats.avg}ms</span>
+                            <span class="latency-stat"><span class="stat-label">max</span> ${baiduStats.max}ms</span>
+                        </div>
                     </div>
                     <div class="latency-item">
                         <div class="latency-header">
                             <span class="latency-name">Cloudflare</span>
                             <span class="latency-value ${getLatencyClass(cfLat)}">${cfLat >= 0 ? cfLat + ' ms' : '-- ms'}</span>
                         </div>
+                        <div class="latency-bars">
+                            ${renderBars(cfHistory)}
+                        </div>
+                        <div class="latency-stats">
+                            <span class="latency-stat"><span class="stat-label">min</span> ${cfStats.min}ms</span>
+                            <span class="latency-stat"><span class="stat-label">avg</span> ${cfStats.avg}ms</span>
+                            <span class="latency-stat"><span class="stat-label">max</span> ${cfStats.max}ms</span>
+                        </div>
                     </div>
                 </div>
                 <div style="text-align: center; margin-top: 8px;">
-                    <button class="btn btn-secondary" onclick="refreshLatency('${wanName}')" style="font-size: 12px; padding: 4px 12px;">重新测试</button>
+                    <button class="btn btn-secondary" onclick="refreshLatency('${wanName}', this)" style="font-size: 12px; padding: 4px 12px;">重新测试</button>
                 </div>
             `;
         }
         
-        async function refreshLatency(wanName) {
-            const btn = event.target;
+        async function refreshLatency(wanName, btn) {
             const originalText = btn.textContent;
             btn.textContent = '测试中...';
             btn.disabled = true;
@@ -1437,18 +1480,17 @@
             const dnsEl = document.getElementById(`stat-dns-${wanName}`);
             
             const maskValue = (el) => {
-                const valueEl = el.querySelector('.stat-value');
-                const original = valueEl.getAttribute('data-original');
+                const original = el.getAttribute('data-original');
                 if (isHidden) {
                     if (!original) {
-                        valueEl.setAttribute('data-original', valueEl.textContent);
-                        valueEl.textContent = '***.***.***.***';
+                        el.setAttribute('data-original', el.textContent);
+                        el.textContent = '***.***.***.***';
                     } else {
-                        valueEl.textContent = '***.***.***.***';
+                        el.textContent = '***.***.***.***';
                     }
                 } else {
                     if (original) {
-                        valueEl.textContent = original;
+                        el.textContent = original;
                     }
                 }
             };
@@ -1458,8 +1500,7 @@
             if (dnsEl) maskValue(dnsEl);
         }
         
-        async function refreshISP(wanName) {
-            const btn = event.target;
+        async function refreshISP(wanName, btn) {
             btn.style.transform = 'rotate(180deg)';
             
             try {
@@ -1543,7 +1584,7 @@
                                 <span>网络信息</span>
                                 <div class="network-info-actions">
                                     <button class="network-info-btn ${privacyClass}" onclick="togglePrivacy('${wan.name}', this)" title="隐藏敏感信息">👁</button>
-                                    <button class="network-info-btn" onclick="refreshISP('${wan.name}')" title="重新检测">↻</button>
+                                    <button class="network-info-btn" onclick="refreshISP('${wan.name}', this)" title="重新检测">↻</button>
                                 </div>
                             </div>
                             <div class="network-info-content">
@@ -1750,9 +1791,10 @@
                             <thead>
                                 <tr>
                                     <th>规则名称</th>
-                                    <th>目标 WAN</th>
-                                    <th>类型</th>
-                                    <th>IP/CIDR</th>
+                                    <th>源地址</th>
+                                    <th>目标地址</th>
+                                    <th>协议</th>
+                                    <th>策略</th>
                                     <th>状态</th>
                                 </tr>
                             </thead>
@@ -1760,11 +1802,10 @@
                                 ${mwan3Rules.map(rule => `
                                     <tr>
                                         <td>${rule.name || '-'}</td>
-                                        <td><span class="rule-wan">${rule.wan || '-'}</span></td>
-                                        <td><span class="rule-type-badge mwan3">mwan3</span></td>
-                                        <td style="font-family: monospace; color: var(--text-muted); font-size: 12px;">
-                                            ${rule.ips ? rule.ips.join(', ') : '-'}
-                                        </td>
+                                        <td style="font-family: monospace; font-size: 12px;">${rule.src || '-'}</td>
+                                        <td style="font-family: monospace; font-size: 12px;">${rule.dst || '-'}</td>
+                                        <td>${rule.proto || '-'}</td>
+                                        <td><span class="rule-type-badge mwan3">${rule.use_policy || '-'}</span></td>
                                         <td>${rule.enabled ? '已启用' : '已禁用'}</td>
                                     </tr>
                                 `).join('')}

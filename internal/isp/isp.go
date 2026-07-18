@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Info 运营商信息
@@ -18,23 +19,32 @@ type Info struct {
 	IP      string `json:"ip"`      // 公网 IP
 }
 
+// cachedInfo 带时间戳的缓存项
+type cachedInfo struct {
+	info *Info
+	ts   time.Time
+}
+
 // Detector 运营商检测器
 type Detector struct {
-	mu    sync.RWMutex
-	cache map[string]*Info // interface -> info
+	mu       sync.RWMutex
+	cache    map[string]cachedInfo // interface -> info
+	cacheTTL time.Duration
 }
 
 // NewDetector 创建检测器
 func NewDetector() *Detector {
 	return &Detector{
-		cache: make(map[string]*Info),
+		cache:    make(map[string]cachedInfo),
+		cacheTTL: 5 * time.Minute,
 	}
 }
 
-// Detect 检测指定 WAN 口的运营商信息
+// Detect 检测指定 WAN 口的运营商信息（带 TTL 缓存，避免重拨换 IP 后长期不刷新）
 func (d *Detector) Detect(iface string) *Info {
 	d.mu.RLock()
-	if info, ok := d.cache[iface]; ok {
+	if c, ok := d.cache[iface]; ok && time.Since(c.ts) < d.cacheTTL {
+		info := c.info
 		d.mu.RUnlock()
 		return info
 	}
@@ -43,7 +53,7 @@ func (d *Detector) Detect(iface string) *Info {
 	info := d.queryAll(iface)
 
 	d.mu.Lock()
-	d.cache[iface] = info
+	d.cache[iface] = cachedInfo{info: info, ts: time.Now()}
 	d.mu.Unlock()
 
 	return info
@@ -126,5 +136,5 @@ func detectISP(s string) string {
 func (d *Detector) ClearCache() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.cache = make(map[string]*Info)
+	d.cache = make(map[string]cachedInfo)
 }

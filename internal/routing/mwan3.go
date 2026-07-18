@@ -3,6 +3,7 @@ package routing
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -16,11 +17,11 @@ type MWAN3Config struct {
 }
 
 type MWAN3Interface struct {
-	Name          string `json:"name"`
-	Enabled       bool   `json:"enabled"`
-	TrackMethod   string `json:"track_method"`
-	TrackIP       string `json:"track_ip"`
-	Metric        int    `json:"metric"`
+	Name        string `json:"name"`
+	Enabled     bool   `json:"enabled"`
+	TrackMethod string `json:"track_method"`
+	TrackIP     string `json:"track_ip"`
+	Metric      int    `json:"metric"`
 }
 
 type MWAN3Member struct {
@@ -31,18 +32,18 @@ type MWAN3Member struct {
 }
 
 type MWAN3Policy struct {
-	Name        string   `json:"name"`
-	UseMembers  []string `json:"use_members"`
-	LastResort  string   `json:"last_resort"`
+	Name       string   `json:"name"`
+	UseMembers []string `json:"use_members"`
+	LastResort string   `json:"last_resort"`
 }
 
 type MWAN3Rule struct {
-	Name       string   `json:"name"`
-	Enabled    bool     `json:"enabled"`
-	Src        string   `json:"src"`
-	Dst        string   `json:"dst"`
-	Proto      string   `json:"proto"`
-	UsePolicy  string   `json:"use_policy"`
+	Name      string `json:"name"`
+	Enabled   bool   `json:"enabled"`
+	Src       string `json:"src"`
+	Dst       string `json:"dst"`
+	Proto     string `json:"proto"`
+	UsePolicy string `json:"use_policy"`
 }
 
 func LoadMWAN3Config(path string) (*MWAN3Config, error) {
@@ -193,7 +194,11 @@ func (i *MWAN3Interface) setOption(option, value string) {
 	case "track_ip":
 		i.TrackIP = value
 	case "metric":
-		i.Metric, _ = strconv.Atoi(value)
+		if v, err := strconv.Atoi(value); err != nil {
+			log.Printf("解析 MWAN3 接口 %s 的 metric 失败 (值=%q): %v", i.Name, value, err)
+		} else {
+			i.Metric = v
+		}
 	}
 }
 
@@ -202,9 +207,17 @@ func (m *MWAN3Member) setOption(option, value string) {
 	case "interface":
 		m.Interface = value
 	case "metric":
-		m.Metric, _ = strconv.Atoi(value)
+		if v, err := strconv.Atoi(value); err != nil {
+			log.Printf("解析 MWAN3 成员 %s 的 metric 失败 (值=%q): %v", m.Interface, value, err)
+		} else {
+			m.Metric = v
+		}
 	case "weight":
-		m.Weight, _ = strconv.Atoi(value)
+		if v, err := strconv.Atoi(value); err != nil {
+			log.Printf("解析 MWAN3 成员 %s 的 weight 失败 (值=%q): %v", m.Interface, value, err)
+		} else {
+			m.Weight = v
+		}
 	}
 }
 
@@ -252,16 +265,6 @@ func (r *MWAN3Rule) addList(listName, value string) {
 			r.Dst += ", " + value
 		}
 	}
-}
-
-func GetBalanceRatio(config *MWAN3Config) map[string]int {
-	ratio := make(map[string]int)
-	for _, member := range config.Members {
-		if member.Weight > 0 {
-			ratio[member.Interface] = member.Weight
-		}
-	}
-	return ratio
 }
 
 func GetWAN1WAN2Ratio(config *MWAN3Config) (int, int) {

@@ -1,14 +1,26 @@
 package routing
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Wooo0/wan-manager/internal/dpi"
 )
+
+// cmdTimeout 外部命令（ipset/iptables/ip 等）的执行超时，防止工具卡死挂住管理器。
+const cmdTimeout = 10 * time.Second
+
+// runCmd 执行外部命令并带超时保护，返回命令错误由调用方处理。
+func (m *Manager) runCmd(name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).Run()
+}
 
 // Manager 策略路由管理器
 type Manager struct {
@@ -171,15 +183,41 @@ func (m *Manager) GetConfig() *RoutingConfig {
 	return m.config
 }
 
+// GetConfigCopy 返回当前配置的深拷贝。
+// 调用方（如 API 写入口）可安全地在副本上增删改规则后再传给 Reload，
+// 不会与管理器内部持有的共享 config 指针产生 data race。
+func (m *Manager) GetConfigCopy() *RoutingConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.config == nil {
+		return nil
+	}
+	cp := *m.config
+	if m.config.Rules != nil {
+		cp.Rules = make([]Rule, len(m.config.Rules))
+		copy(cp.Rules, m.config.Rules)
+		// Rule 内部的切片也复制，避免共享底层数组
+		for i := range cp.Rules {
+			if m.config.Rules[i].IPs != nil {
+				cp.Rules[i].IPs = append([]string(nil), m.config.Rules[i].IPs...)
+			}
+			if m.config.Rules[i].Apps != nil {
+				cp.Rules[i].Apps = append([]string(nil), m.config.Rules[i].Apps...)
+			}
+		}
+	}
+	return &cp
+}
+
 // createIPSets 创建 ipset 集合
 func (m *Manager) createIPSets() error {
 	// 为每个 WAN 口创建 ipset
 	for wan := range m.wanTable {
 		setName := fmt.Sprintf("wan_%s", wan)
 		// 先删除（忽略错误）
-		exec.Command("ipset", "destroy", setName).Run()
+		m.runCmd("ipset", "destroy", setName)
 		// 创建 hash:net 类型
-		if err := exec.Command("ipset", "create", setName, "hash:net").Run(); err != nil {
+		if err := m.runCmd("ipset", "create", setName, "hash:net"); err != nil {
 			return fmt.Errorf("创建 ipset %s 失败: %w", setName, err)
 		}
 		log.Printf("创建 ipset: %s", setName)
@@ -193,13 +231,13 @@ func (m *Manager) createIPSets() error {
 	}
 
 	for name, ips := range ispSets {
-		exec.Command("ipset", "destroy", name).Run()
-		if err := exec.Command("ipset", "create", name, "hash:net").Run(); err != nil {
+		m.runCmd("ipset", "destroy", name)
+		if err := m.runCmd("ipset", "create", name, "hash:net"); err != nil {
 			return fmt.Errorf("创建 ipset %s 失败: %w", name, err)
 		}
 		// 添加 IP
 		for _, ip := range ips {
-			if err := exec.Command("ipset", "add", name, ip).Run(); err != nil {
+			if err := m.runCmd("ipset", "add", name, ip); err != nil {
 				log.Printf("添加 IP %s 到 %s 失败: %v", ip, name, err)
 			}
 		}
@@ -215,13 +253,13 @@ func (m *Manager) createIPSets() error {
 			continue
 		}
 		setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
-		exec.Command("ipset", "destroy", setName).Run()
-		if err := exec.Command("ipset", "create", setName, "hash:ip").Run(); err != nil {
+		m.runCmd("ipset", "destroy", setName)
+		if err := m.runCmd("ipset", "create", setName, "hash:ip"); err != nil {
 			return fmt.Errorf("创建 ipset %s 失败: %w", setName, err)
 		}
 		if rule.Type == "custom" {
 			for _, ip := range rule.IPs {
-				if err := exec.Command("ipset", "add", setName, ip).Run(); err != nil {
+				if err := m.runCmd("ipset", "add", setName, ip); err != nil {
 					log.Printf("添加 IP %s 到 %s 失败: %v", ip, setName, err)
 				}
 			}
@@ -237,11 +275,11 @@ func (m *Manager) createIPSets() error {
 // setupIPTables 配置 iptables 规则
 func (m *Manager) setupIPTables() error {
 	// 创建自定义链
-	exec.Command("iptables", "-t", "mangle", "-N", "WAN_MANAGER").Run()
-	exec.Command("iptables", "-t", "mangle", "-F", "WAN_MANAGER")
+	m.runCmd("iptables", "-t", "mangle", "-N", "WAN_MANAGER")
+	m.runCmd("iptables", "-t", "mangle", "-F", "WAN_MANAGER")
 
 	// 将自定义链插入到 PREROUTING
-	exec.Command("iptables", "-t", "mangle", "-I", "PREROUTING", "-j", "WAN_MANAGER")
+	m.runCmd("iptables", "-t", "mangle", "-I", "PREROUTING", "-j", "WAN_MANAGER")
 
 	// 为每个自定义规则添加 MARK
 	for _, rule := range m.config.Rules {
@@ -256,7 +294,7 @@ func (m *Manager) setupIPTables() error {
 		}
 		// 匹配 ipset 后打 mark
 		cmd := fmt.Sprintf("iptables -t mangle -A WAN_MANAGER -m set --match-set %s dst -j MARK --set-mark %d", setName, tableNum)
-		if err := exec.Command("sh", "-c", cmd).Run(); err != nil {
+		if err := m.runCmd("sh", "-c", cmd); err != nil {
 			return fmt.Errorf("添加 iptables 规则失败: %w", err)
 		}
 		log.Printf("添加规则: %s -> %s (mark %d)", rule.Name, rule.WAN, tableNum)
@@ -275,7 +313,9 @@ func (m *Manager) setupIPTables() error {
 			continue
 		}
 		cmd := fmt.Sprintf("iptables -t mangle -A WAN_MANAGER -m set --match-set %s dst -j MARK --set-mark %d", setName, tableNum)
-		exec.Command("sh", "-c", cmd).Run()
+		if err := m.runCmd("sh", "-c", cmd); err != nil {
+			log.Printf("添加运营商分流规则失败: %v", err)
+		}
 	}
 
 	return nil
@@ -286,7 +326,7 @@ func (m *Manager) setupIPRules() error {
 	for wan, tableNum := range m.wanTable {
 		// 添加 ip rule：匹配 mark 走对应路由表
 		cmd := fmt.Sprintf("ip rule add fwmark %d table %d", tableNum, tableNum)
-		if err := exec.Command("sh", "-c", cmd).Run(); err != nil {
+		if err := m.runCmd("sh", "-c", cmd); err != nil {
 			log.Printf("添加 ip rule 失败: %v", err)
 		}
 
@@ -295,7 +335,9 @@ func (m *Manager) setupIPRules() error {
 		gateway := m.getWANGateway(wan)
 		if gateway != "" {
 			cmd = fmt.Sprintf("ip route add default via %s table %d", gateway, tableNum)
-			exec.Command("sh", "-c", cmd).Run()
+			if err := m.runCmd("sh", "-c", cmd); err != nil {
+				log.Printf("配置路由表失败: %v", err)
+			}
 			log.Printf("配置路由表 %d: 默认网关 %s", tableNum, gateway)
 		}
 	}
@@ -305,7 +347,9 @@ func (m *Manager) setupIPRules() error {
 // getWANGateway 获取 WAN 口的网关
 func (m *Manager) getWANGateway(wan string) string {
 	// 从 ip route 获取默认网关
-	out, err := exec.Command("ip", "route", "show", "dev", wan).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ip", "route", "show", "dev", wan).Output()
 	if err != nil {
 		return ""
 	}
@@ -325,31 +369,35 @@ func (m *Manager) getWANGateway(wan string) string {
 func (m *Manager) cleanupIPRules() {
 	for _, tableNum := range m.wanTable {
 		cmd := fmt.Sprintf("ip rule del fwmark %d table %d 2>/dev/null", tableNum, tableNum)
-		exec.Command("sh", "-c", cmd).Run()
+		if err := m.runCmd("sh", "-c", cmd); err != nil {
+			log.Printf("删除 ip rule 失败: %v", err)
+		}
 		cmd = fmt.Sprintf("ip route flush table %d 2>/dev/null", tableNum)
-		exec.Command("sh", "-c", cmd).Run()
+		if err := m.runCmd("sh", "-c", cmd); err != nil {
+			log.Printf("清理路由表失败: %v", err)
+		}
 	}
 }
 
 // cleanupIPTables 清理 iptables 规则
 func (m *Manager) cleanupIPTables() {
-	exec.Command("iptables", "-t", "mangle", "-D", "PREROUTING", "-j", "WAN_MANAGER").Run()
-	exec.Command("iptables", "-t", "mangle", "-F", "WAN_MANAGER").Run()
-	exec.Command("iptables", "-t", "mangle", "-X", "WAN_MANAGER").Run()
+	m.runCmd("iptables", "-t", "mangle", "-D", "PREROUTING", "-j", "WAN_MANAGER")
+	m.runCmd("iptables", "-t", "mangle", "-F", "WAN_MANAGER")
+	m.runCmd("iptables", "-t", "mangle", "-X", "WAN_MANAGER")
 }
 
 // cleanupIPSets 清理 ipset
 func (m *Manager) cleanupIPSets() {
 	for wan := range m.wanTable {
 		setName := fmt.Sprintf("wan_%s", wan)
-		exec.Command("ipset", "destroy", setName).Run()
+		m.runCmd("ipset", "destroy", setName)
 	}
 	for _, name := range []string{"isp_telecom", "isp_unicom", "isp_mobile"} {
-		exec.Command("ipset", "destroy", name).Run()
+		m.runCmd("ipset", "destroy", name)
 	}
 	for _, rule := range m.config.Rules {
 		setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
-		exec.Command("ipset", "destroy", setName).Run()
+		m.runCmd("ipset", "destroy", setName)
 	}
 }
 
@@ -387,16 +435,20 @@ func (m *Manager) onFlowDetected(flow *dpi.FlowInfo) {
 		return
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// 在锁内仅收集需要执行的规则，避免在持锁状态下执行阻塞式外部命令
+	type ipsetTarget struct {
+		setName string
+		dstIP   string
+		wan     string
+	}
+	var targets []ipsetTarget
 
-	// 遍历所有应用规则，找到匹配的应用
+	m.mu.RLock()
 	for _, rule := range m.config.Rules {
 		if !rule.Enabled || rule.Type != "app" {
 			continue
 		}
 
-		// 检查该规则是否包含此应用
 		matched := false
 		for _, app := range rule.Apps {
 			if app == flow.Application {
@@ -408,15 +460,25 @@ func (m *Manager) onFlowDetected(flow *dpi.FlowInfo) {
 			continue
 		}
 
-		// 将目标 IP 动态添加到规则的 ipset
 		setName := fmt.Sprintf("rule_%s", sanitizeName(rule.Name))
 		tableNum := m.wanTable[rule.WAN]
 		if tableNum == 0 {
 			continue
 		}
+		targets = append(targets, ipsetTarget{
+			setName: setName,
+			dstIP:   flow.DstIP,
+			wan:     rule.WAN,
+		})
+	}
+	m.mu.RUnlock()
 
-		// 添加目标 IP 到 ipset
-		exec.Command("ipset", "add", setName, flow.DstIP, "-exist").Run()
-		log.Printf("应用分流: %s -> %s (IP: %s)", flow.Application, rule.WAN, flow.DstIP)
+	// 锁外执行 ipset 命令，避免阻塞管理器的读路径
+	for _, t := range targets {
+		if err := m.runCmd("ipset", "add", t.setName, t.dstIP, "-exist"); err != nil {
+			log.Printf("应用分流失败: %s -> %s (IP: %s): %v", flow.Application, t.wan, t.dstIP, err)
+			continue
+		}
+		log.Printf("应用分流: %s -> %s (IP: %s)", flow.Application, t.wan, t.dstIP)
 	}
 }

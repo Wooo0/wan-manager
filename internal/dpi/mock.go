@@ -3,7 +3,6 @@ package dpi
 import (
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 )
 
@@ -11,7 +10,6 @@ type MockDetector struct {
 	BaseDetector
 	ticker   *time.Ticker
 	stopChan chan struct{}
-	mu       sync.Mutex
 }
 
 func NewMockDetector() *MockDetector {
@@ -72,21 +70,21 @@ func (d *MockDetector) generateMockFlows() {
 	}
 
 	ports := map[string]uint16{
-		"https": 443,
-		"http": 80,
-		"dns": 53,
-		"wechat": 80,
-		"douyin": 443,
+		"https":    443,
+		"http":     80,
+		"dns":      53,
+		"wechat":   80,
+		"douyin":   443,
 		"bilibili": 443,
-		"qq": 8000,
-		"steam": 27015,
-		"taobao": 443,
-		"zhihu": 443,
-		"weibo": 443,
-		"aliyun": 443,
-		"thunder": 9000,
-		"youtube": 443,
-		"netflix": 443,
+		"qq":       8000,
+		"steam":    27015,
+		"taobao":   443,
+		"zhihu":    443,
+		"weibo":    443,
+		"aliyun":   443,
+		"thunder":  9000,
+		"youtube":  443,
+		"netflix":  443,
 	}
 
 	for {

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wooo0/wan-manager/internal/config"
@@ -40,17 +41,16 @@ type WANStats struct {
 
 // WANCollector WAN 采集器
 type WANCollector struct {
-	wanConfigs      []config.WANConfig
-	interval        time.Duration
-	mu              sync.RWMutex
-	stats           []WANStats
-	prevData        map[string]wanPrevData
-	ispDetector     *isp.Detector
-	rxHistory       map[string][]float64
-	txHistory       map[string][]float64
-	latencyHistory  map[string]map[string][]int
-	historySize     int
-	latencyHistorySize int
+	wanConfigs  []config.WANConfig
+	interval    time.Duration
+	mu          sync.RWMutex
+	stats       []WANStats
+	prevData    map[string]wanPrevData
+	ispDetector *isp.Detector
+	rxHistory   map[string][]float64
+	txHistory   map[string][]float64
+	historySize int
+	collecting  atomic.Bool
 }
 
 type wanPrevData struct {
@@ -62,15 +62,13 @@ type wanPrevData struct {
 // NewWANCollector 创建 WAN 采集器
 func NewWANCollector(wans []config.WANConfig, interval int) *WANCollector {
 	return &WANCollector{
-		wanConfigs:         wans,
-		interval:           time.Duration(interval) * time.Second,
-		prevData:           make(map[string]wanPrevData),
-		ispDetector:        isp.NewDetector(),
-		rxHistory:          make(map[string][]float64),
-		txHistory:          make(map[string][]float64),
-		latencyHistory:     make(map[string]map[string][]int),
-		historySize:        20,
-		latencyHistorySize: 5,
+		wanConfigs:  wans,
+		interval:    time.Duration(interval) * time.Second,
+		prevData:    make(map[string]wanPrevData),
+		ispDetector: isp.NewDetector(),
+		rxHistory:   make(map[string][]float64),
+		txHistory:   make(map[string][]float64),
+		historySize: 20,
 	}
 }
 
@@ -81,7 +79,13 @@ func (w *WANCollector) Start() {
 		ticker := time.NewTicker(w.interval)
 		defer ticker.Stop()
 		for range ticker.C {
+			// 防止上一次采集（含 ping 等阻塞调用）尚未完成时叠加触发，
+			// 避免在低采集间隔下出现 ping 进程堆积。
+			if !w.collecting.CompareAndSwap(false, true) {
+				continue
+			}
 			w.collect()
+			w.collecting.Store(false)
 		}
 	}()
 }
@@ -146,10 +150,10 @@ func (w *WANCollector) collect() {
 				}
 			}
 			s.Connected = s.RxBytes > 0 || s.TxBytes > 0
-			
+
 			s.IPv4, s.IPv6 = getInterfaceIP(wc.Interface)
 			s.DNS = getInterfaceDNS(wc.Interface)
-			
+
 			if s.Connected {
 				s.ISP = w.ispDetector.Detect(wc.Interface)
 				s.Latencies = w.pingWithHistory([]string{"114.114.114.114", "www.baidu.com", "1.1.1.1"}, wc.Interface)
@@ -161,8 +165,9 @@ func (w *WANCollector) collect() {
 			}
 
 			w.updateHistory(wc.Interface, s.RxSpeed, s.TxSpeed)
-			s.RxHistory = w.rxHistory[wc.Interface]
-			s.TxHistory = w.txHistory[wc.Interface]
+			// 复制历史切片（而非共享底层数组），避免与 GetStats 返回的
+			// 切片在后续 append 时并发读写同一底层数组导致 data race。
+			s.RxHistory, s.TxHistory = w.snapshotHistory(wc.Interface)
 		}
 
 		stats = append(stats, s)
@@ -194,6 +199,16 @@ func (w *WANCollector) updateHistory(iface string, rxSpeed, txSpeed float64) {
 	}
 }
 
+// snapshotHistory 在锁内复制指定接口的 rx/tx 历史切片，返回独立数组，
+// 供 GetStats 对外返回，避免与 updateHistory 的 append 共享底层数组引发 data race。
+func (w *WANCollector) snapshotHistory(iface string) (rx, tx []float64) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	rx = append([]float64(nil), w.rxHistory[iface]...)
+	tx = append([]float64(nil), w.txHistory[iface]...)
+	return
+}
+
 type mockWANData struct {
 	rxBytes uint64
 	txBytes uint64
@@ -205,7 +220,7 @@ type mockWANData struct {
 func (w *WANCollector) getMockData(name string, now time.Time) mockWANData {
 	baseRx := uint64(1000000000)
 	baseTx := uint64(500000000)
-	
+
 	if name == "wan1" {
 		return mockWANData{
 			rxBytes: baseRx + uint64(now.Second())*1000000,
@@ -221,7 +236,7 @@ func (w *WANCollector) getMockData(name string, now time.Time) mockWANData {
 			},
 		}
 	}
-	
+
 	return mockWANData{
 		rxBytes: baseRx/2 + uint64(now.Second())*500000,
 		txBytes: baseTx/2 + uint64(now.Second())*250000,
@@ -246,7 +261,7 @@ func (w *WANCollector) getMockHistory(name string, direction string, now time.Ti
 	if direction == "tx" {
 		base = base / 2.5
 	}
-	
+
 	for i := 0; i < w.historySize; i++ {
 		offset := (now.Second() + i) % 10
 		result = append(result, base+float64(offset)*100000)
@@ -270,7 +285,7 @@ func getInterfaceIP(iface string) (ipv4, ipv6 string) {
 	if err != nil {
 		return "", ""
 	}
-	
+
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -293,13 +308,13 @@ func getInterfaceIP(iface string) (ipv4, ipv6 string) {
 			}
 		}
 	}
-	
+
 	return ipv4, ipv6
 }
 
 // pingLatency 测试到目标地址的延迟（毫秒），iface 指定绑定接口
-// count 指定 ping 的次数，返回平均延迟
-func pingLatency(target, iface string, count int) int {
+// count 指定 ping 的次数，返回每次的延迟数组
+func pingLatency(target, iface string, count int) []int {
 	args := []string{"-c", strconv.Itoa(count), "-W", "2"}
 	if iface != "" {
 		args = append(args, "-I", iface)
@@ -308,30 +323,12 @@ func pingLatency(target, iface string, count int) int {
 	cmd := exec.Command("ping", args...)
 	output, err := cmd.Output()
 	if err != nil {
-		return -1
+		return make([]int, count)
 	}
-	
-	// 解析 avg 延迟
+
+	// 解析每次 ping 的 time=
 	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "avg") || strings.Contains(line, "average") {
-			// 格式：rtt min/avg/max/mdev = 10.0/20.0/30.0/5.0 ms
-			parts := strings.Split(line, "=")
-			if len(parts) >= 2 {
-				stats := strings.Split(parts[1], "/")
-				if len(stats) >= 2 {
-					if t, err := strconv.ParseFloat(strings.TrimSpace(stats[1]), 64); err == nil {
-						return int(t)
-					}
-				}
-			}
-		}
-	}
-	
-	// 备用：从单个 time= 解析
-	lines = strings.Split(string(output), "\n")
-	var total float64
-	var validCount int
+	var latencies []int
 	for _, line := range lines {
 		if strings.Contains(line, "time=") {
 			parts := strings.Split(line, "time=")
@@ -339,36 +336,36 @@ func pingLatency(target, iface string, count int) int {
 				timeStr := strings.Split(parts[1], " ")[0]
 				timeStr = strings.TrimSuffix(timeStr, "ms")
 				if t, err := strconv.ParseFloat(timeStr, 64); err == nil {
-					total += t
-					validCount++
+					latencies = append(latencies, int(t))
 				}
 			}
 		}
 	}
-	
-	if validCount > 0 {
-		return int(total / float64(validCount))
+
+	// 如果解析到的次数不够，用 -1 填充
+	for len(latencies) < count {
+		latencies = append(latencies, -1)
 	}
-	
-	return -1
+
+	return latencies[:count]
 }
 
-// pingWithHistory 并行测试多个目标的延迟，每个目标 ping 5 次取平均
+// pingWithHistory 并行测试多个目标的延迟，每个目标 ping 5 次
 func (w *WANCollector) pingWithHistory(targets []string, iface string) []LatencyResult {
 	type result struct {
-		target  string
-		latency int
+		target    string
+		latencies []int
 	}
-	
+
 	ch := make(chan result, len(targets))
-	
+
 	for _, t := range targets {
 		go func(target string) {
-			// 每个目标 ping 5 次，取平均延迟
-			ch <- result{target: target, latency: pingLatency(target, iface, 5)}
+			// 每个目标 ping 5 次，返回 5 个延迟值
+			ch <- result{target: target, latencies: pingLatency(target, iface, 5)}
 		}(t)
 	}
-	
+
 	var results []LatencyResult
 	for i := 0; i < len(targets); i++ {
 		r := <-ch
@@ -380,64 +377,50 @@ func (w *WANCollector) pingWithHistory(targets []string, iface string) []Latency
 		} else if name == "114.114.114.114" {
 			name = "default"
 		}
-		
+
+		// 计算平均延迟用于显示
+		// 注意：avgLatency 默认 -1 表示「无有效数据」哨兵值；
+		// 求和用独立的 sum，避免把哨兵值 -1 也算进平均值（否则会偏小 1）。
+		var avgLatency int = -1
+		var sum int
+		var validCount int
+		for _, lat := range r.latencies {
+			if lat >= 0 {
+				sum += lat
+				validCount++
+			}
+		}
+		if validCount > 0 {
+			avgLatency = sum / validCount
+		}
+
 		results = append(results, LatencyResult{
 			Target:    name,
-			Latency:   r.latency,
-			Latencies: []int{r.latency}, // 单次平均值
+			Latency:   avgLatency,
+			Latencies: r.latencies, // 5 个独立延迟值
 		})
 	}
-	
+
 	return results
 }
 
-// pingMultiple 并行测试多个目标的延迟，iface 指定绑定接口（无历史记录版本）
-func pingMultiple(targets []string, iface string) []LatencyResult {
-	type result struct {
-		target  string
-		latency int
-	}
-	
-	ch := make(chan result, len(targets))
-	
-	for _, t := range targets {
-		go func(target string) {
-			ch <- result{target: target, latency: pingLatency(target, iface, 5)}
-		}(t)
-	}
-	
-	var results []LatencyResult
-	for i := 0; i < len(targets); i++ {
-		r := <-ch
-		name := r.target
-		if name == "www.baidu.com" {
-			name = "baidu"
-		} else if name == "1.1.1.1" {
-			name = "cloudflare"
-		} else if name == "114.114.114.114" {
-			name = "default"
-		}
-		results = append(results, LatencyResult{Target: name, Latency: r.latency})
-	}
-	
-	return results
-}
-
-// getInterfaceDNS 获取系统 DNS 服务器
+// getInterfaceDNS 获取指定接口的 DNS 服务器。
+// OpenWrt 下优先读取按接口隔离的 resolv 文件（/tmp/resolv.conf.d/<iface>.resolv.conf），
+// 若不存在则回退到全局 resolv.conf.* 文件。
 func getInterfaceDNS(iface string) string {
-	// OpenWrt 的 DNS 配置文件
 	files := []string{
+		"/tmp/resolv.conf.d/" + iface + ".resolv.conf",
 		"/tmp/resolv.conf.d/resolv.conf.auto",
 		"/tmp/resolv.conf.auto",
 		"/etc/resolv.conf",
 	}
-	
+
 	for _, file := range files {
 		data, err := os.ReadFile(file)
 		if err != nil {
 			continue
 		}
-		
+
 		var dnsServers []string
 		lines := strings.Split(string(data), "\n")
 		for _, line := range lines {
@@ -453,6 +436,6 @@ func getInterfaceDNS(iface string) string {
 			return strings.Join(dnsServers, ", ")
 		}
 	}
-	
+
 	return ""
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,10 +74,6 @@ func (c *ClientCollector) collect() {
 		return
 	}
 
-	// 调试日志：打印采集到的数据量
-	log.Printf("采集到 %d 个 WiFi 客户端，ARP 表 %d 条，DHCP 租约 %d 条",
-		len(wifiClients), len(arpMap), len(dhcpMap))
-
 	seen := make(map[string]bool)
 	var result []ClientInfo
 
@@ -90,12 +87,8 @@ func (c *ClientCollector) collect() {
 		// 优先从 ARP 表获取 IP，否则从 DHCP 租约获取
 		if arp, ok := arpMap[mac]; ok {
 			wc.IP = arp.IP
-			log.Printf("WiFi 客户端 %s 从 ARP 表获取 IP: %s", mac, arp.IP)
 		} else if dhcp, ok := dhcpMap[mac]; ok {
 			wc.IP = dhcp.IP
-			log.Printf("WiFi 客户端 %s 从 DHCP 租约获取 IP: %s", mac, dhcp.IP)
-		} else {
-			log.Printf("WiFi 客户端 %s 未找到 IP 地址", mac)
 		}
 
 		// 从 DHCP 租约获取主机名
@@ -333,7 +326,7 @@ func getIwinfoAssoclist(iface string) map[string]int {
 		// iwinfo assoclist 输出格式：MAC PHY SECU RSSI NOISE SNR ...
 		// fields[3] 是 RSSI（信号强度，如 "-55"）
 		signal := 0
-		if n, err := parseInt(fields[3]); err == nil {
+		if n, err := strconv.Atoi(fields[3]); err == nil {
 			signal = n
 		}
 
@@ -372,7 +365,7 @@ func getIwStationDump(iface string) map[string]int {
 				valStr := strings.TrimSpace(parts[1])
 				valFields := strings.Fields(valStr)
 				if len(valFields) > 0 {
-					if n, err := parseInt(valFields[0]); err == nil {
+					if n, err := strconv.Atoi(valFields[0]); err == nil {
 						result[currentMAC] = n
 					}
 				}
@@ -393,7 +386,6 @@ func collectARPMap() map[string]arpEntry {
 	}
 
 	// 调试日志：打印原始文件内容
-	log.Printf("ARP 文件原始内容 (%d 字节): %s", len(data), string(data))
 
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	lineNum := 0
@@ -467,28 +459,4 @@ func collectDHCPMap() map[string]dhcpEntry {
 
 	log.Printf("DHCP 租约文件解析到 %d 条记录", len(result))
 	return result
-}
-
-func parseInt(s string) (int, error) {
-	s = strings.TrimSpace(s)
-	negative := false
-	if strings.HasPrefix(s, "-") {
-		negative = true
-		s = s[1:]
-	}
-
-	var result int
-	for _, c := range s {
-		if c >= '0' && c <= '9' {
-			result = result*10 + int(c-'0')
-		} else {
-			break
-		}
-	}
-
-	if negative {
-		result = -result
-	}
-
-	return result, nil
 }
