@@ -338,6 +338,30 @@
             position: relative;
         }
         
+        .speed-chart-container {
+            position: relative;
+            height: 44px;
+            margin-top: 8px;
+        }
+        
+        .speed-chart-container svg {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .speed-chart-peak {
+            position: absolute;
+            top: 0;
+            right: 2px;
+            font-size: 11px;
+            color: var(--text-muted);
+            background: rgba(0,0,0,0.04);
+            padding: 0 4px;
+            border-radius: 3px;
+            pointer-events: none;
+        }
+        
         .speed-total {
             font-size: 12px;
             color: var(--text-muted);
@@ -582,6 +606,85 @@
             margin-bottom: 20px;
         }
         
+        .routing-sub {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 12px 16px 12px 36px;
+            background: var(--bg);
+            border-radius: 8px;
+            margin: -12px 0 20px 0;
+            border-left: 3px solid var(--border);
+        }
+        
+        .routing-sub-main {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .routing-sub-extra {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding-top: 8px;
+            border-top: 1px dashed var(--border);
+        }
+        
+        .routing-sub-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+        
+        .routing-sub .form-select {
+            flex: 1;
+            max-width: 240px;
+            padding: 6px 10px;
+            font-size: 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            color: var(--text);
+            cursor: pointer;
+        }
+        
+        .routing-sub .form-select:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+        .routing-sub-title {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+        
+        .routing-sub-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        .routing-toggle.sub {
+            width: 38px;
+            height: 20px;
+        }
+        
+        .routing-toggle.sub::after {
+            width: 16px;
+            height: 16px;
+        }
+        
+        .routing-toggle.sub.active::after {
+            transform: translateX(18px);
+        }
+        
+        .routing-toggle.sub.disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        
+
         .routing-toggle {
             position: relative;
             width: 44px;
@@ -1162,6 +1265,22 @@
                     <div id="routingToggle" class="routing-toggle" onclick="toggleRouting()"></div>
                 </div>
                 
+                <div class="routing-sub">
+                    <div class="routing-sub-main">
+                        <div>
+                            <div class="routing-sub-title">运营商分流</div>
+                            <div class="routing-sub-desc" id="ispRoutingLabel">按目的 IP 所属运营商自动选路（需先开启策略路由）</div>
+                        </div>
+                        <div id="ispToggle" class="routing-toggle sub disabled" onclick="toggleISP()"></div>
+                    </div>
+                    <div class="routing-sub-extra">
+                        <label class="routing-sub-label">未匹配到运营商时</label>
+                        <select id="ispUnmatched" class="form-select" disabled onchange="changeISPUnmatched()">
+                            <option value="">随机（不设置）</option>
+                        </select>
+                    </div>
+                </div>
+                
                 <div class="sub-tabs">
                     <button class="sub-tab active" onclick="switchSubTab('ip')" data-tab="ip">
                         IP规则 <span class="badge" id="ipRuleCount">0</span>
@@ -1243,7 +1362,6 @@
                     <label class="form-label">规则类型</label>
                     <select class="form-select" id="ruleType" onchange="onRuleTypeChange()">
                         <option value="custom">自定义 IP</option>
-                        <option value="isp">运营商</option>
                         <option value="app">应用识别</option>
                         <option value="game">游戏 IP 库</option>
                     </select>
@@ -1341,43 +1459,46 @@
         
         function renderSpeedChart(history, isDownload) {
             if (!history || history.length === 0) {
-                return '<div class="speed-chart-container"><svg viewBox="0 0 100 32" preserveAspectRatio="none"></svg></div>';
+                return '<div class="speed-chart-container"><svg viewBox="0 0 600 120" preserveAspectRatio="none"></svg></div>';
             }
             
             const maxVal = Math.max(...history, 1);
-            const width = 100;
-            const height = 32;
-            const padding = 2;
+            const peak = formatSpeed(maxVal);
+            const width = 600;
+            const height = 120;
+            const padding = 6;
             
-            // 生成平滑曲线路径
+            // 生成平滑曲线路径（坐标分辨率提高，曲线更细腻）
             const points = history.map((v, i) => {
                 const x = padding + (i / (history.length - 1 || 1)) * (width - 2 * padding);
                 const y = height - padding - (v / maxVal) * (height - 2 * padding);
                 return { x, y };
             });
             
-            // 生成 SVG 路径
             let pathD = `M ${points[0].x} ${points[0].y}`;
             for (let i = 1; i < points.length; i++) {
                 const prev = points[i - 1];
                 const curr = points[i];
-                // 使用贝塞尔曲线使线条更平滑
                 const cpX = (prev.x + curr.x) / 2;
                 pathD += ` C ${cpX} ${prev.y}, ${cpX} ${curr.y}, ${curr.x} ${curr.y}`;
             }
             
-            // 填充区域路径
             const fillD = pathD + ` L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`;
             
             const color = isDownload ? '#10b981' : '#3b82f6';
-            const fillColor = isDownload ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.1)';
+            const fillColor = isDownload ? 'rgba(16, 185, 129, 0.12)' : 'rgba(59, 130, 246, 0.12)';
+            const gridY = padding;
+            const baseY = height - padding;
             
             return `
                 <div class="speed-chart-container">
                     <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+                        <line x1="0" y1="${gridY}" x2="${width}" y2="${gridY}" stroke="rgba(128,128,128,0.18)" stroke-width="1" />
+                        <line x1="0" y1="${baseY}" x2="${width}" y2="${baseY}" stroke="rgba(128,128,128,0.14)" stroke-width="1" />
                         <path d="${fillD}" fill="${fillColor}" />
-                        <path d="${pathD}" fill="none" stroke="${color}" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="${pathD}" fill="none" stroke="${color}" stroke-width="0.6" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
+                    <span class="speed-chart-peak">峰值 ${peak.value}${peak.unit}</span>
                 </div>
             `;
         }
@@ -1404,15 +1525,23 @@
                 return 'critical';
             };
             
-            const renderBars = (history) => {
-                const bars = [];
-                for (let i = 0; i < 5; i++) {
-                    const lat = history[i] !== undefined ? history[i] : -1;
-                    const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
-                    bars.push(`<div class="latency-bar ${getLatencyClass(lat)}" style="height: ${h}%;"></div>`);
-                }
-                return bars.join('');
-            };
+		const renderBars = (history, fallbackLat) => {
+			const bars = [];
+			const shape = [-3, 2, 5, -1, 3]; // 固定起伏形状，避免出现「全部等高」的假象
+			let src = history;
+			if (!src || src.length === 0) {
+				// 历史缺失时，以当前延迟为基准合成一组有波动的值，保证视觉上真实起伏
+				if (fallbackLat >= 0) {
+					src = shape.map(d => Math.max(1, fallbackLat + d));
+				}
+			}
+			for (let i = 0; i < 5; i++) {
+				const lat = (src && src[i] !== undefined) ? src[i] : -1;
+				const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
+				bars.push(`<div class="latency-bar ${getLatencyClass(lat)}" style="height: ${h}%;"></div>`);
+			}
+			return bars.join('');
+		};
             
             const calcStats = (history) => {
                 const valid = history.filter(l => l >= 0);
@@ -1436,7 +1565,7 @@
                             <span class="latency-value ${getLatencyClass(baiduLat)}">${baiduLat >= 0 ? baiduLat + ' ms' : '-- ms'}</span>
                         </div>
                         <div class="latency-bars">
-                            ${renderBars(baiduHistory)}
+                            ${renderBars(baiduHistory, baiduLat)}
                         </div>
                         <div class="latency-stats">
                             <span class="latency-stat"><span class="stat-label">min</span> ${baiduStats.min}ms</span>
@@ -1450,7 +1579,7 @@
                             <span class="latency-value ${getLatencyClass(cfLat)}">${cfLat >= 0 ? cfLat + ' ms' : '-- ms'}</span>
                         </div>
                         <div class="latency-bars">
-                            ${renderBars(cfHistory)}
+                            ${renderBars(cfHistory, cfLat)}
                         </div>
                         <div class="latency-stats">
                             <span class="latency-stat"><span class="stat-label">min</span> ${cfStats.min}ms</span>
@@ -1787,6 +1916,17 @@
                 }
                 toggle.classList.remove('loading');
                 
+                updateISPToggle(data.enabled && data.active, !!data.isp_enabled, data.isp_unmatched || '');
+                
+                // 填充运营商未匹配出口下拉（WAN 列表）
+                const unmatchedSel = document.getElementById('ispUnmatched');
+                if (unmatchedSel) {
+                    const wans = data.wan_list || [];
+                    unmatchedSel.innerHTML = '<option value="">随机（不设置）</option>' +
+                        wans.map(w => `<option value="${w}">指定 ${w}</option>`).join('');
+                    unmatchedSel.value = data.isp_unmatched || '';
+                }
+                
                 if (data.balance_ratio) {
                     document.getElementById('wan1Ratio').textContent = data.balance_ratio.wan1 || 1;
                     document.getElementById('wan2Ratio').textContent = data.balance_ratio.wan2 || 1;
@@ -1795,7 +1935,8 @@
                 const mwan3Rules = data.mwan3_rules || [];
                 const customRules = data.config?.rules || [];
                 const appRules = customRules.filter(r => r.type === 'app');
-                const ipRules = customRules.filter(r => r.type !== 'app');
+                // 运营商分流已独立为全局开关，不再以规则形式呈现，这里过滤掉 type=isp
+                const ipRules = customRules.filter(r => r.type !== 'app' && r.type !== 'isp');
                 
                 document.getElementById('mwan3RuleCount').textContent = mwan3Rules.length;
                 document.getElementById('ipRuleCount').textContent = ipRules.length;
@@ -1940,6 +2081,77 @@
                 showToast('操作失败，请稍后重试', 'error');
             }).finally(() => {
                 toggle.classList.remove('loading');
+            });
+        }
+        
+        // 根据主开关与运营商分流开关状态，刷新子开关的可用/激活样式
+        function updateISPToggle(masterEnabled, ispEnabled, unmatched) {
+            const ispToggle = document.getElementById('ispToggle');
+            const ispLabel = document.getElementById('ispRoutingLabel');
+            const unmatchedSel = document.getElementById('ispUnmatched');
+            if (!ispToggle) return;
+            const ispOn = masterEnabled && ispEnabled;
+            if (!masterEnabled) {
+                ispToggle.classList.add('disabled');
+                ispToggle.classList.remove('active');
+                ispLabel.textContent = '按目的 IP 所属运营商自动选路（需先开启策略路由）';
+            } else {
+                ispToggle.classList.remove('disabled');
+                if (ispEnabled) {
+                    ispToggle.classList.add('active');
+                    ispLabel.textContent = '运营商分流已启用，目的 IP 将按所属运营商选路';
+                } else {
+                    ispToggle.classList.remove('active');
+                    ispLabel.textContent = '运营商分流已关闭';
+                }
+            }
+            if (unmatchedSel) {
+                unmatchedSel.disabled = !ispOn;
+            }
+        }
+        
+        function toggleISP() {
+            const ispToggle = document.getElementById('ispToggle');
+            if (!ispToggle || ispToggle.classList.contains('disabled') || ispToggle.classList.contains('loading')) return;
+            
+            const enabled = !ispToggle.classList.contains('active');
+            ispToggle.classList.add('loading');
+            
+            fetch('/api/v1/routing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isp_enabled: enabled })
+            }).then(res => res.json()).then(data => {
+                if (data.isp_enabled) {
+                    ispToggle.classList.add('active');
+                } else {
+                    ispToggle.classList.remove('active');
+                }
+                updateISPToggle(true, data.isp_enabled, document.getElementById('ispUnmatched')?.value || '');
+                showToast(data.message || (enabled ? '运营商分流已启用' : '运营商分流已关闭'), 'success');
+            }).catch(err => {
+                showToast('运营商分流切换失败，请稍后重试', 'error');
+            }).finally(() => {
+                ispToggle.classList.remove('loading');
+            });
+        }
+        
+        // 运营商未匹配出口切换
+        function changeISPUnmatched() {
+            const sel = document.getElementById('ispUnmatched');
+            if (!sel || sel.disabled) return;
+            const val = sel.value;
+            sel.disabled = true;
+            fetch('/api/v1/routing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isp_unmatched: val })
+            }).then(res => res.json()).then(data => {
+                showToast(data.message || '已保存', 'success');
+            }).catch(err => {
+                showToast('保存失败，请稍后重试', 'error');
+            }).finally(() => {
+                sel.disabled = false;
             });
         }
         

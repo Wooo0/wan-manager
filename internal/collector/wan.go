@@ -68,7 +68,7 @@ func NewWANCollector(wans []config.WANConfig, interval int) *WANCollector {
 		ispDetector: isp.NewDetector(),
 		rxHistory:   make(map[string][]float64),
 		txHistory:   make(map[string][]float64),
-		historySize: 20,
+		historySize: 40,
 	}
 }
 
@@ -131,8 +131,8 @@ func (w *WANCollector) collect() {
 			s.IPv4 = mockData.isp.IP
 			s.Latency = 15
 			s.Latencies = []LatencyResult{
-				{Target: "baidu", Latency: 12 + now.Second()%8},
-				{Target: "cloudflare", Latency: 28 + now.Second()%10},
+				{Target: "baidu", Latency: 12 + now.Second()%8, Latencies: mockLatencyHistory(12, now)},
+				{Target: "cloudflare", Latency: 28 + now.Second()%10, Latencies: mockLatencyHistory(28, now)},
 			}
 			s.RxHistory = w.getMockHistory(wc.Name, "rx", now)
 			s.TxHistory = w.getMockHistory(wc.Name, "tx", now)
@@ -250,6 +250,23 @@ func (w *WANCollector) getMockData(name string, now time.Time) mockWANData {
 			IP:      "103.172.41.169",
 		},
 	}
+}
+
+// mockLatencyHistory 生成一组带波动的延迟历史值（模拟连续 ping 的抖动），
+// 让前端延迟柱状图呈现真实起伏，而非全部等高。base 为该目标基准延迟（ms）。
+func mockLatencyHistory(base int, now time.Time) []int {
+	// 每秒整体漂移，使每次刷新都有变化（"循环"感）；每个采样点再叠加固定形状抖动。
+	drift := now.Second() % 9
+	shape := []int{-3, 2, 5, -1, 3} // 5 个采样点的相对起伏
+	result := make([]int, len(shape))
+	for i, d := range shape {
+		v := base + drift + d
+		if v < 1 {
+			v = 1
+		}
+		result[i] = v
+	}
+	return result
 }
 
 func (w *WANCollector) getMockHistory(name string, direction string, now time.Time) []float64 {

@@ -34,13 +34,13 @@ const (
 
 // Manager 策略路由管理器
 type Manager struct {
-	mu       sync.RWMutex
-	config   *RoutingConfig
-	wanTable map[string]int    // WAN 名称 -> 路由表编号
-	active   bool
-	detector dpi.Detector
-	appSets     map[string]string // app名称 -> ipset名称（动态维护）
-	ispWAN      map[string]string // 运营商(telecom/unicom/mobile) -> WAN 名称，启动时识别一次
+	mu           sync.RWMutex
+	config       *RoutingConfig
+	wanTable     map[string]int // WAN 名称 -> 路由表编号
+	active       bool
+	detector     dpi.Detector
+	appSets      map[string]string // app名称 -> ipset名称（动态维护）
+	ispWAN       map[string]string // 运营商(telecom/unicom/mobile) -> WAN 名称，启动时识别一次
 	gameRulesDir string            // 游戏 .rules 目录（已解析为绝对路径）
 }
 
@@ -402,6 +402,25 @@ func (m *Manager) setupIPTables() error {
 				log.Printf("添加运营商分流规则失败: %v", err)
 			} else {
 				log.Printf("运营商分流: %s -> %s (mark %d)", op, wan, tableNum)
+			}
+		}
+
+		// 未匹配到任何运营商的流量：可指定统一出口，否则保持默认/随机路由
+		if m.config.ISP.Unmatched != "" {
+			wan := m.config.ISP.Unmatched
+			tableNum := m.wanTable[wan]
+			if tableNum != 0 {
+				cmd := fmt.Sprintf("iptables -t mangle -A WAN_MANAGER "+
+					"-m mark --mark 0x0 "+
+					"-m set ! --match-set isp_telecom dst "+
+					"-m set ! --match-set isp_unicom dst "+
+					"-m set ! --match-set isp_mobile dst "+
+					"-j MARK --set-mark %d", tableNum)
+				if err := m.runCmd("sh", "-c", cmd); err != nil {
+					log.Printf("添加运营商未匹配出口规则失败: %v", err)
+				} else {
+					log.Printf("运营商未匹配出口: -> %s (mark %d)", wan, tableNum)
+				}
 			}
 		}
 	}

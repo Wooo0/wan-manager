@@ -12,8 +12,8 @@ import (
 
 	"github.com/Wooo0/wan-manager/internal/collector"
 	"github.com/Wooo0/wan-manager/internal/dpi"
-	"github.com/Wooo0/wan-manager/internal/rules"
 	"github.com/Wooo0/wan-manager/internal/routing"
+	"github.com/Wooo0/wan-manager/internal/rules"
 	"github.com/Wooo0/wan-manager/internal/web"
 )
 
@@ -176,8 +176,9 @@ func (h *APIHandler) handleRouting(w http.ResponseWriter, r *http.Request) {
 // handleGetRouting 获取路由配置和状态
 func (h *APIHandler) handleGetRouting(w http.ResponseWriter, r *http.Request) {
 	result := map[string]interface{}{
-		"enabled": false,
-		"active":  false,
+		"enabled":     false,
+		"active":      false,
+		"isp_enabled": false,
 	}
 
 	mwan3Config, err := routing.LoadMWAN3Config("")
@@ -203,12 +204,23 @@ func (h *APIHandler) handleGetRouting(w http.ResponseWriter, r *http.Request) {
 		result["mwan3_rules"] = []interface{}{}
 	}
 
+	// WAN 口列表（供前端运营商未匹配出口下拉使用）
+	wans := []string{}
+	if mwan3Config != nil {
+		for _, iface := range mwan3Config.Interfaces {
+			wans = append(wans, iface.Name)
+		}
+	}
+	result["wan_list"] = wans
+
 	if h.routingManager != nil {
 		// 返回配置深拷贝，避免直接修改管理器持有的共享 config 指针
 		// （无锁并发读写，与 Reload/其他读取构成 data race）。
 		cfgCopy := h.routingManager.GetConfigCopy()
 		result["enabled"] = cfgCopy.Enabled
 		result["active"] = h.routingManager.IsActive()
+		result["isp_enabled"] = cfgCopy.ISP.Enabled
+		result["isp_unmatched"] = cfgCopy.ISP.Unmatched
 		if cfgCopy.MWAN3Config == nil && mwan3Config != nil {
 			cfgCopy.MWAN3Config = mwan3Config
 		}
@@ -234,6 +246,48 @@ func (h *APIHandler) handlePostRouting(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{
 			"message": "请求参数格式错误",
+		})
+		return
+	}
+
+	// 运营商分流开关 / 未匹配出口设置（isp_enabled 与 isp_unmatched 可单独或同时提交）
+	ispVal, hasISP := raw["isp_enabled"]
+	unmatchedVal, hasUnmatched := raw["isp_unmatched"]
+	if hasISP || hasUnmatched {
+		cfg := h.routingManager.GetConfigCopy()
+		if hasISP {
+			enabled, ok := ispVal.(bool)
+			if !ok {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{
+					"message": "isp_enabled 参数必须是布尔值",
+				})
+				return
+			}
+			cfg.ISP.Enabled = enabled
+		}
+		if hasUnmatched {
+			u, ok := unmatchedVal.(string)
+			if !ok {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{
+					"message": "isp_unmatched 参数必须是字符串",
+				})
+				return
+			}
+			cfg.ISP.Unmatched = u
+		}
+		if err := h.routingManager.Reload(cfg); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{
+				"message": "运营商分流设置失败: " + err.Error(),
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message":       "运营商分流设置已保存",
+			"isp_enabled":   cfg.ISP.Enabled,
+			"isp_unmatched": cfg.ISP.Unmatched,
 		})
 		return
 	}
