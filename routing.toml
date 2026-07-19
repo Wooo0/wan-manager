@@ -1,0 +1,12 @@
+enabled = true
+default_wan = "wan1"
+balance_mode = "balanced"
+balance_ratio = "1:1"
+rules = []
+game_rules_dir = ""
+
+[isp]
+  enabled = false
+  auto_detect = true
+  unmatched = ""
+  [isp.wan_mapping]

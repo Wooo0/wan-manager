@@ -125,6 +125,13 @@ func main() {
 	opWAN := detectISPWANMapping(cfg.WAN, routingCfg.ISP, ispDetector)
 	routingManager.SetISPOperatorMap(opWAN)
 
+	// 注入 ISP 映射刷新回调：当重载时发现 ispWAN 缺失（启动时检测失败），自动重新检测。
+	// 闭包捕获 cfg.WAN（WAN 接口列表）和 ispDetector（带缓存），
+	// 路由配置的 wan_mapping/auto_detect 一般在运行时不变化，用启动时的值即可。
+	routingManager.SetISPMappingRefresher(func() map[string]string {
+		return detectISPWANMapping(cfg.WAN, routingCfg.ISP, ispDetector)
+	})
+
 	// 初始化 DPI 检测器：按配置选择系统级真实检测或 mock
 	var dpiDetector dpi.Detector
 	if cfg.DPI.Mode == "mock" {

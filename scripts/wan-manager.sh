@@ -255,7 +255,7 @@ start_service() {
     if [ -x "$INIT_SCRIPT" ]; then
         "$INIT_SCRIPT" start >/dev/null 2>&1
     else
-        nohup "$BINARY" -config "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
+        "$BINARY" -config "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
         echo $! > "$PID_FILE"
     fi
 
@@ -333,7 +333,7 @@ restart_service() {
     if [ -x "$INIT_SCRIPT" ]; then
         "$INIT_SCRIPT" start >/dev/null 2>&1
     else
-        nohup "$BINARY" -config "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
+        "$BINARY" -config "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
         echo $! > "$PID_FILE"
     fi
 
@@ -713,7 +713,7 @@ update_service() {
         if [ -x "$INIT_SCRIPT" ]; then
             "$INIT_SCRIPT" start >/dev/null 2>&1
         else
-            nohup "$BINARY" -config "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
+            "$BINARY" -config "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
             echo $! > "$PID_FILE"
         fi
         sleep 2

@@ -20,7 +20,11 @@ import (
 const cmdTimeout = 10 * time.Second
 
 // runCmd 执行外部命令并带超时保护，返回命令错误由调用方处理。
+// 如果命令在系统中不可用（开发/Mock 环境），直接返回 nil。
 func (m *Manager) runCmd(name string, args ...string) error {
+	if m.noSysTools {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -44,11 +48,13 @@ type Manager struct {
 	config       *RoutingConfig
 	wanTable     map[string]int // WAN 名称 -> 路由表编号
 	active       bool
+	noSysTools   bool              // 开发环境无 ipset/iptables 时跳过系统操作
 	detector     dpi.Detector
-	appSets      map[string]string // app名称 -> ipset名称（动态维护）
-	ispWAN       map[string]string        // 运营商(telecom/unicom/mobile) -> WAN 名称，启动时识别一次
-	ispDataSource map[string]ispdata.Source // 运营商(telecom/unicom/mobile) -> 来源(remote/local/empty)
-	gameRulesDir string                   // 游戏 .rules 目录（已解析为绝对路径）
+	appSets      map[string]string        // app名称 -> ipset名称（动态维护）
+	ispWAN       map[string]string        // 运营商(telecom/unicom/mobile) -> WAN 名称
+	ispDataSource map[string]ispdata.Source
+	gameRulesDir string
+	ispMappingRefresher func() map[string]string // 启动/重载时刷新 ISP 映射的回调
 }
 
 // NewManager 创建策略路由管理器
@@ -60,7 +66,12 @@ func NewManager(config *RoutingConfig, wanInterfaces []string) *Manager {
 		ispWAN:   make(map[string]string),
 	}
 
-	// 为每个 WAN 口分配路由表编号（从 100 开始）
+	// 检查 ipset 是否可用（Windows/开发环境跳过系统操作）
+	if _, err := exec.LookPath("ipset"); err != nil {
+		m.noSysTools = true
+		log.Printf("路由管理器: ipset 不可用，跳过 ipset/iptables/ip 操作（Mock 模式）")
+	}
+
 	for i, wan := range wanInterfaces {
 		m.wanTable[wan] = 100 + i
 	}
@@ -80,6 +91,15 @@ func (m *Manager) SetISPOperatorMap(mapping map[string]string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ispWAN = mapping
+}
+
+// SetISPMappingRefresher 设置 ISP 映射刷新回调。
+// 当 setupIPTables 发现某个运营商缺少 WAN 映射时，会调用此回调重新检测。
+// 回调由 main 层注入（闭包捕获 WAN 配置和 isp.Detector），避免 routing 包产生循环依赖。
+func (m *Manager) SetISPMappingRefresher(fn func() map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ispMappingRefresher = fn
 }
 
 // SetISPDataSource 设置各运营商 IP 段的来源（remote/local/empty），
@@ -404,6 +424,25 @@ func (m *Manager) setupIPTables() error {
 
 	// 运营商分流规则（映射由启动时检测得到，避免写死 wan1/wan2）
 	if m.config.ISP.Enabled {
+		// 检查 ispWAN 是否缺失（启动时检测失败/网络未就绪），
+		// 若已注入 refresher 则尝试重新检测（Reload/Web UI 切换 ISP 时生效）。
+		needsRefresh := false
+		for _, op := range []string{opTelecom, opUnicom, opMobile} {
+			if _, ok := m.ispWAN[op]; !ok {
+				needsRefresh = true
+				break
+			}
+		}
+		if needsRefresh && m.ispMappingRefresher != nil {
+			log.Printf("运营商分流: ispWAN 映射不完整，尝试重新检测...")
+			if opWAN := m.ispMappingRefresher(); len(opWAN) > 0 {
+				for op, wan := range opWAN {
+					m.ispWAN[op] = wan
+				}
+				log.Printf("运营商分流: 重新检测到 %d 个 WAN 映射", len(opWAN))
+			}
+		}
+
 		ispSets := map[string]string{
 			"isp_telecom": opTelecom,
 			"isp_unicom":  opUnicom,

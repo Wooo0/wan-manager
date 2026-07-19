@@ -1,0 +1,45 @@
+#!/bin/sh /etc/rc.common
+# WAN Manager - OpenWrt 自启动脚本
+# 放到 /etc/init.d/ 并在 /etc/rc.d/ 创建软链即可开机自启
+# 用法:
+#   /etc/init.d/S99wan-manager start
+#   /etc/init.d/S99wan-manager stop
+#   /etc/init.d/S99wan-manager restart
+
+START=99
+STOP=10
+
+# ---- 路径配置（安装时由 install.sh 或手动修改） ----
+INSTALL_DIR="/mnt/usb-11e10c9b/mntusb/wan-manager"
+BINARY="${INSTALL_DIR}/wan-manager"
+CONFIG_DIR="${INSTALL_DIR}/etc"
+CONFIG_FILE="${CONFIG_DIR}/config.toml"
+LOG_FILE="${INSTALL_DIR}/wan-manager.log"
+PID_FILE="${INSTALL_DIR}/wan-manager.pid"
+
+start() {
+    echo "启动 WAN Manager..."
+
+    [ ! -f "$BINARY" ] && echo "错误: 找不到 $BINARY" && return 1
+
+    "$BINARY" -config "$CONFIG_FILE" >> "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    echo "OK (PID: $(cat $PID_FILE))"
+}
+
+stop() {
+    echo "停止 WAN Manager..."
+    if [ -f "$PID_FILE" ]; then
+        pid=$(cat "$PID_FILE")
+        kill "$pid" 2>/dev/null && echo "已停止 (PID: $pid)"
+        rm -f "$PID_FILE"
+    fi
+    # 兜底：杀掉所有 wan-manager 进程
+    killall wan-manager 2>/dev/null
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}

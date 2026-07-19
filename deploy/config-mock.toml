@@ -1,0 +1,21 @@
+[server]
+listen_addr = ":8899"
+
+[collector]
+interval = 1
+
+[collector.miwifi]
+password = ""
+
+[dpi]
+mode = "mock"
+
+[[wan]]
+name = "wan1"
+interface = "eth0"
+label = "WAN1"
+
+[[wan]]
+name = "wan2"
+interface = "eth1"
+label = "WAN2"
