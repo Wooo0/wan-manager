@@ -195,9 +195,9 @@ func (c *ClientCollector) collect() {
 		if client.Band == "" {
 			client.Band = bandFromMiWiFiType(md.Type)
 		}
-		// SSID 兜底
+		// SSID 兜底（传入当前 band 帮助区分 5.2G/5.8G 的两个 5G SSID）
 		if client.SSID == "" {
-			client.SSID = getSSIDFromStatus(miNewStatus, md.Type)
+			client.SSID = getSSIDFromStatus(miNewStatus, md.Type, client.Band)
 		}
 
 		// 有线设备补 IP/名称
@@ -295,9 +295,9 @@ func (c *ClientCollector) updateNodeNames(devices []MiWiFiDevice) {
 		c.nodeNames[""] = "主路由"
 	}
 
-	// 先从 isap=1 的设备建立节点名
+	// 先从 isap > 0 的设备建立节点名（RC01 用 isap=8 标识 mesh AP）
 	for _, d := range devices {
-		if d.IsAP == 1 {
+		if d.IsAP > 0 {
 			mac := normalizeMAC(d.MAC)
 			if _, exists := c.nodeNames[mac]; !exists {
 				c.nodeNames[mac] = d.Name
@@ -308,19 +308,15 @@ func (c *ClientCollector) updateNodeNames(devices []MiWiFiDevice) {
 		}
 	}
 
-	// 兜底：为所有 parent MAC 找到或生成简称
+	// 兜底：为所有未命名的 parent MAC 自动生成 Mesh-xxxxx 简称
 	for _, d := range devices {
 		parentMAC := normalizeMAC(d.Parent)
 		if parentMAC == "" || parentMAC == normalizeMAC(d.MAC) {
 			continue
 		}
 		if _, exists := c.nodeNames[parentMAC]; !exists {
-			// 优先用 oname，再不行自动编号
-			name := d.OName
-			if name == "" {
-				name = "Mesh-" + parentMAC[len(parentMAC)-5:]
-			}
-			c.nodeNames[parentMAC] = name
+			// 不要用客户端名字！直接用 MAC 后 5 位生成唯一简称
+			c.nodeNames[parentMAC] = "Mesh-" + parentMAC[len(parentMAC)-5:]
 		}
 	}
 }
@@ -351,15 +347,21 @@ func bandFromMiWiFiType(t int) string {
 	}
 }
 
-// getSSIDFromStatus 尝试从 newstatus 获取 SSID
-func getSSIDFromStatus(status *MiWiFiNewStatus, devType int) string {
+// getSSIDFromStatus 根据设备类型和频段从 newstatus 推断 SSID
+func getSSIDFromStatus(status *MiWiFiNewStatus, devType int, band string) string {
 	if status == nil {
 		return ""
 	}
 	switch devType {
 	case 1: // 2.4G
 		return status.Band24G.SSID
-	case 2: // 5G Game
+	case 2: // 5G
+		// 5.2G 低信道 → 普通 5G SSID；5.8G 高信道 → 游戏 5G SSID
+		if strings.Contains(band, "5.2") {
+			if status.Band5.SSID != "" {
+				return status.Band5.SSID
+			}
+		}
 		if status.Band5G.SSID != "" {
 			return status.Band5G.SSID
 		}

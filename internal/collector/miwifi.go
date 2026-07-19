@@ -211,12 +211,70 @@ func (c *MiWiFiClient) GetNewStatus() (*MiWiFiNewStatus, error) {
 		return nil, err
 	}
 
-	var result MiWiFiNewStatus
-	if err := json.Unmarshal(data, &result); err != nil {
+	// 先用通用 map 解析，兼容不同固件的 key 名（2gh/24gh/2g）
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("解析 newstatus 失败: %w", err)
 	}
 
-	return &result, nil
+	result := &MiWiFiNewStatus{}
+	if v, ok := getInt(raw, "count"); ok {
+		result.Count = v
+	}
+	if v, ok := getInt(raw, "re_count"); ok {
+		result.ReCount = v
+	}
+	// 遍历所有可能的频段 key
+	for key, val := range raw {
+		bi := parseBandInfo(val)
+		if bi == nil {
+			continue
+		}
+		switch key {
+		case "2gh", "24gh", "24g", "2g":
+			result.Band24G = *bi
+		case "5gh", "5ghz":
+			result.Band5G = *bi
+		case "5g", "5gz":
+			result.Band5 = *bi
+		default:
+			// 也可能有其他频段如 6gh，暂时忽略
+		}
+	}
+
+	return result, nil
+}
+
+func getInt(m map[string]interface{}, key string) (int, bool) {
+	if v, ok := m[key]; ok {
+		switch n := v.(type) {
+		case float64:
+			return int(n), true
+		case int:
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+func parseBandInfo(v interface{}) *MiWiFiBandInfo {
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	bi := &MiWiFiBandInfo{}
+	if ssid, ok := m["ssid"].(string); ok {
+		bi.SSID = ssid
+	}
+	if cnt, ok := m["online_sta_count"]; ok {
+		switch n := cnt.(type) {
+		case float64:
+			bi.OnlineStaCount = int(n)
+		case int:
+			bi.OnlineStaCount = n
+		}
+	}
+	return bi
 }
 
 // apiGet 通用 API GET 请求
