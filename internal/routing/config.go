@@ -82,3 +82,26 @@ func LoadRoutingConfig(path string) (*RoutingConfig, error) {
 
 	return cfg, nil
 }
+
+// SaveRoutingConfig 将配置写入 TOML 文件
+func SaveRoutingConfig(path string, cfg *RoutingConfig) error {
+	// 只保存用户可控的字段（排除运行时注入的 MWAN3Config、ISP IP 段等）
+	saveCfg := *cfg
+	// 清除大数组避免写入巨量 IP 段（这些由远程/本地加载器管理）
+	saveCfg.ISP.Telecom = nil
+	saveCfg.ISP.Unicom = nil
+	saveCfg.ISP.Mobile = nil
+	saveCfg.MWAN3Config = nil
+
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("创建路由配置文件失败: %w", err)
+	}
+	defer f.Close()
+
+	encoder := toml.NewEncoder(f)
+	if err := encoder.Encode(saveCfg); err != nil {
+		return fmt.Errorf("写入路由配置文件失败: %w", err)
+	}
+	return nil
+}

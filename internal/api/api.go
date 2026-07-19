@@ -23,6 +23,7 @@ type APIHandler struct {
 	clientCollector *collector.ClientCollector
 	routingManager  *routing.Manager
 	version         string
+	routingCfgPath  string // 路由配置文件路径，用于持久化
 }
 
 // SummaryResponse 汇总响应
@@ -40,13 +41,27 @@ type RoutingStatus struct {
 	Config  *routing.RoutingConfig `json:"config,omitempty"`
 }
 
+// reloadAndSave 执行 Reload 并持久化到配置文件
+func (h *APIHandler) reloadAndSave(cfg *routing.RoutingConfig) error {
+	if err := h.routingManager.Reload(cfg); err != nil {
+		return err
+	}
+	if h.routingCfgPath != "" {
+		if err := routing.SaveRoutingConfig(h.routingCfgPath, cfg); err != nil {
+			log.Printf("保存路由配置失败: %v", err)
+		}
+	}
+	return nil
+}
+
 // NewAPIHandler 创建 API 处理器
-func NewAPIHandler(wc *collector.WANCollector, cc *collector.ClientCollector, rm *routing.Manager, version string) *APIHandler {
+func NewAPIHandler(wc *collector.WANCollector, cc *collector.ClientCollector, rm *routing.Manager, version string, routingCfgPath string) *APIHandler {
 	return &APIHandler{
 		wanCollector:    wc,
 		clientCollector: cc,
 		routingManager:  rm,
 		version:         version,
+		routingCfgPath:  routingCfgPath,
 	}
 }
 
@@ -307,7 +322,7 @@ func (h *APIHandler) handlePostRouting(w http.ResponseWriter, r *http.Request) {
 			}
 			cfg.ISP.Unmatched = u
 		}
-		if err := h.routingManager.Reload(cfg); err != nil {
+		if err := h.reloadAndSave(cfg); err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{
 				"message": "运营商分流设置失败: " + err.Error(),
@@ -337,7 +352,7 @@ func (h *APIHandler) handlePostRouting(w http.ResponseWriter, r *http.Request) {
 			cfg := h.routingManager.GetConfigCopy()
 			cfg.Enabled = enabled
 
-			if err := h.routingManager.Reload(cfg); err != nil {
+			if err := h.reloadAndSave(cfg); err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				json.NewEncoder(w).Encode(map[string]string{
 					"message": "切换失败: " + err.Error(),
@@ -411,7 +426,7 @@ func (h *APIHandler) handlePostRouting(w http.ResponseWriter, r *http.Request) {
 	cfg := h.routingManager.GetConfigCopy()
 	cfg.Rules = append(cfg.Rules, rule)
 
-	if err := h.routingManager.Reload(cfg); err != nil {
+	if err := h.reloadAndSave(cfg); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{
 			"message": "添加规则失败: " + err.Error(),
@@ -484,7 +499,7 @@ func (h *APIHandler) handlePutRouting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.routingManager.Reload(cfg); err != nil {
+	if err := h.reloadAndSave(cfg); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{
 			"message": "更新规则失败: " + err.Error(),
@@ -535,7 +550,7 @@ func (h *APIHandler) handleDeleteRouting(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.routingManager.Reload(cfg); err != nil {
+	if err := h.reloadAndSave(cfg); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{
 			"message": "删除规则失败: " + err.Error(),

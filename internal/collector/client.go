@@ -288,21 +288,40 @@ func (c *ClientCollector) collect() {
 }
 
 // updateNodeNames 从设备列表中提取 mesh AP 节点的 MAC→名称 映射
+// 同时为所有出现的 parent MAC 兜底生成简称
 func (c *ClientCollector) updateNodeNames(devices []MiWiFiDevice) {
+	// 主路由兜底
+	if _, exists := c.nodeNames[""]; !exists {
+		c.nodeNames[""] = "主路由"
+	}
+
+	// 先从 isap=1 的设备建立节点名
 	for _, d := range devices {
 		if d.IsAP == 1 {
 			mac := normalizeMAC(d.MAC)
 			if _, exists := c.nodeNames[mac]; !exists {
 				c.nodeNames[mac] = d.Name
 				if d.Name == "" || d.Name == mac {
-					c.nodeNames[mac] = "Mesh-" + mac[len(mac)-5:] // 简短别名
+					c.nodeNames[mac] = "Mesh-" + mac[len(mac)-5:]
 				}
 			}
 		}
 	}
-	// 确保主路由也有名字
-	if _, exists := c.nodeNames[""]; !exists {
-		c.nodeNames[""] = "主路由"
+
+	// 兜底：为所有 parent MAC 找到或生成简称
+	for _, d := range devices {
+		parentMAC := normalizeMAC(d.Parent)
+		if parentMAC == "" || parentMAC == normalizeMAC(d.MAC) {
+			continue
+		}
+		if _, exists := c.nodeNames[parentMAC]; !exists {
+			// 优先用 oname，再不行自动编号
+			name := d.OName
+			if name == "" {
+				name = "Mesh-" + parentMAC[len(parentMAC)-5:]
+			}
+			c.nodeNames[parentMAC] = name
+		}
 	}
 }
 
@@ -361,20 +380,56 @@ func signalFromMiWiFi(raw int) int {
 func getChannelForInterface(iface string) int {
 	out, err := exec.Command("iwinfo", iface, "info").Output()
 	if err != nil {
+		// 备选: iw dev
+		if out2, err2 := exec.Command("iw", "dev", iface, "info").Output(); err2 == nil {
+			return parseChannelFromIw(string(out2))
+		}
 		return 0
 	}
-	lines := strings.Split(string(out), "\n")
+	return parseChannelFromIwinfo(string(out))
+}
+
+// parseChannelFromIwinfo 从 iwinfo 输出中提取信道
+// 格式: "Channel: 36 (5.180 GHz)" 或 "信道: 36" 或 "Channel: 149"
+func parseChannelFromIwinfo(output string) int {
+	lines := strings.Split(output, "\n")
 	for _, line := range lines {
-		// 行格式: "Channel: 36 (5.180 GHz)" 或 "Channel: 149 (5.745 GHz)"
-		if strings.Contains(line, "Channel:") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				fields := strings.Fields(strings.TrimSpace(parts[1]))
-				if len(fields) > 0 {
-					var ch int
-					fmt.Sscanf(fields[0], "%d", &ch)
-					return ch
-				}
+		lower := strings.ToLower(line)
+		// 匹配 "channel:" 或 "信道:"
+		if !strings.Contains(lower, "channel") && !strings.Contains(line, "信道") {
+			continue
+		}
+		// 提取冒号后的第一个数字
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		fields := strings.Fields(parts[1])
+		if len(fields) == 0 {
+			continue
+		}
+		var ch int
+		if _, err := fmt.Sscanf(fields[0], "%d", &ch); err == nil && ch > 0 {
+			return ch
+		}
+	}
+	return 0
+}
+
+// parseChannelFromIw 从 iw dev 输出中提取信道
+// 格式: "channel 36 (5180 MHz)"
+func parseChannelFromIw(output string) int {
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if !strings.HasPrefix(strings.TrimSpace(lower), "channel") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			var ch int
+			if _, err := fmt.Sscanf(fields[1], "%d", &ch); err == nil && ch > 0 {
+				return ch
 			}
 		}
 	}

@@ -148,7 +148,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	apiHandler := api.NewAPIHandler(wanCollector, clientCollector, routingManager, version)
+	apiHandler := api.NewAPIHandler(wanCollector, clientCollector, routingManager, version, *routingConfigPath)
 	apiHandler.RegisterRoutes(mux)
 
 	server := &http.Server{

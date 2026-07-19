@@ -611,6 +611,11 @@
             background: rgba(240, 173, 78, 0.1);
             color: var(--warning);
         }
+
+        .band-badge.band-wifi {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
         
         .band-badge.band-wired {
             background: rgba(88, 96, 105, 0.1);
@@ -761,15 +766,6 @@
         .routing-toggle.loading {
             opacity: 0.6;
             cursor: not-allowed;
-        }
-        
-        .routing-toggle.loading::after {
-            animation: toggleSpin 0.8s linear infinite;
-        }
-        
-        @keyframes toggleSpin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
         }
         
         .sub-tabs {
@@ -1760,18 +1756,25 @@
                 const signal = client.signal || 0;
                 const sClass = signalClass(signal);
                 
-                // 连接方式
+                // 连接方式：只显示 有线 / WiFi
                 let connBadge = '';
                 if (client.conn_type === 'wired') {
                     connBadge = '<span class="band-badge band-wired">有线</span>';
                 } else {
-                    const band = client.band || '';
-                    const bandClass = band.includes('5') ? 'band-5g' : 'band-24g';
-                    connBadge = `<span class="band-badge ${bandClass}">${band || 'WiFi'}</span>`;
+                    connBadge = '<span class="band-badge band-wifi">WiFi</span>';
                 }
 
-                // SSID + 频段
-                const ssidBand = (client.ssid ? client.ssid + ' / ' : '') + (client.band || '');
+                // SSID + 频段（智能拼接，避免空 / 情况）
+                let ssidBand = '';
+                if (client.ssid && client.band) {
+                    ssidBand = client.ssid + ' / ' + client.band;
+                } else if (client.ssid) {
+                    ssidBand = client.ssid;
+                } else if (client.band) {
+                    ssidBand = client.band;
+                } else {
+                    ssidBand = '-';
+                }
                 
                 // 信号
                 let signalHtml = '';
@@ -1800,7 +1803,7 @@
                         <td>${client.ip || '-'}</td>
                         <td style="font-family: monospace; color: var(--text-muted);">${client.mac || '-'}</td>
                         <td>${connBadge}</td>
-                        <td style="font-size: 11px; color: var(--text-muted);">${ssidBand || '-'}</td>
+                        <td style="font-size: 11px; color: var(--text-muted);">${ssidBand}</td>
                         <td>${signalHtml}</td>
                         <td style="font-size: 11px;">${nodeName}</td>
                     </tr>
@@ -2010,7 +2013,12 @@
                 }
                 for (let i = 0; i < 5; i++) {
                     const lat = (src && src[i] !== undefined) ? src[i] : -1;
-                    const h = lat >= 0 ? Math.min(100, lat * 2) : 20;
+                    // 高度计算：0-200ms 线性映射到 5-100%，最小 5% 保证可见
+                    // 公式：5 + lat * 0.5，0ms→5%, 50ms→30%, 100ms→55%, 200ms→100%
+                    let h;
+                    if (lat < 0) h = 20;       // 超时：固定 20%
+                    else if (lat === 0) h = 5; // 0ms：最小可见
+                    else h = Math.min(100, 5 + lat * 0.5);
                     bars.push(
                         `<div class="latency-bar ${getLatencyClass(lat)}"
                             style="height: ${h}%;"
