@@ -98,7 +98,7 @@ func main() {
 	wanCollector := collector.NewWANCollector(cfg.WAN, cfg.Collector.Interval)
 	wanCollector.Start()
 
-	clientCollector := collector.NewClientCollector(cfg.Collector.Interval)
+	clientCollector := collector.NewClientCollector(cfg.Collector.Interval, cfg.Collector.MiWiFi.Password)
 	clientCollector.Start()
 
 	// 初始化策略路由管理器

@@ -20,6 +20,15 @@ type LatencyResult struct {
 	Latencies []int  `json:"latencies"`
 }
 
+// ISPInfo 运营商信息（公开类型，供 API 层使用）
+type ISPInfo struct {
+	ISP     string `json:"isp"`
+	Country string `json:"country"`
+	Region  string `json:"region"`
+	City    string `json:"city"`
+	IP      string `json:"ip"`
+}
+
 // WANStats WAN 口统计数据
 type WANStats struct {
 	Name      string          `json:"name"`
@@ -41,16 +50,21 @@ type WANStats struct {
 
 // WANCollector WAN 采集器
 type WANCollector struct {
-	wanConfigs  []config.WANConfig
-	interval    time.Duration
-	mu          sync.RWMutex
-	stats       []WANStats
-	prevData    map[string]wanPrevData
-	ispDetector *isp.Detector
-	rxHistory   map[string][]float64
-	txHistory   map[string][]float64
-	historySize int
-	collecting  atomic.Bool
+	wanConfigs   []config.WANConfig
+	interval     time.Duration
+	mu           sync.RWMutex
+	stats        []WANStats
+	prevData     map[string]wanPrevData
+	ispDetector  *isp.Detector
+	rxHistory    map[string][]float64
+	txHistory    map[string][]float64
+	historySize  int
+	collecting   atomic.Bool
+
+	// 连接状态变化通知
+	lastConnected    map[string]bool
+	statusSubscribers map[chan []string]struct{}
+	statusSubMu       sync.Mutex
 }
 
 type wanPrevData struct {
@@ -62,13 +76,15 @@ type wanPrevData struct {
 // NewWANCollector 创建 WAN 采集器
 func NewWANCollector(wans []config.WANConfig, interval int) *WANCollector {
 	return &WANCollector{
-		wanConfigs:  wans,
-		interval:    time.Duration(interval) * time.Second,
-		prevData:    make(map[string]wanPrevData),
-		ispDetector: isp.NewDetector(),
-		rxHistory:   make(map[string][]float64),
-		txHistory:   make(map[string][]float64),
-		historySize: 40,
+		wanConfigs:        wans,
+		interval:          time.Duration(interval) * time.Second,
+		prevData:          make(map[string]wanPrevData),
+		ispDetector:       isp.NewDetector(),
+		rxHistory:         make(map[string][]float64),
+		txHistory:         make(map[string][]float64),
+		historySize:       40,
+		lastConnected:     make(map[string]bool),
+		statusSubscribers: make(map[chan []string]struct{}),
 	}
 }
 
@@ -91,12 +107,53 @@ func (w *WANCollector) Start() {
 }
 
 // GetStats 获取当前统计数据
+// PingTargets 公开的按需延迟测试方法，供 API 层调用
+// targets: 目标列表（如 www.baidu.com, 1.1.1.1）
+// iface: 绑定的网络接口名
+// count: 每个目标 ping 次数
+func (w *WANCollector) PingTargets(targets []string, iface string, count int) []LatencyResult {
+	if count <= 0 {
+		count = 5
+	}
+	return w.pingWithHistory(targets, iface, count)
+}
+
 func (w *WANCollector) GetStats() []WANStats {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	result := make([]WANStats, len(w.stats))
 	copy(result, w.stats)
 	return result
+}
+
+// SubscribeStatusChanges 订阅连接状态变化通知，返回一个只读 channel
+func (w *WANCollector) SubscribeStatusChanges() chan []string {
+	ch := make(chan []string, 8)
+	w.statusSubMu.Lock()
+	w.statusSubscribers[ch] = struct{}{}
+	w.statusSubMu.Unlock()
+	return ch
+}
+
+// UnsubscribeStatusChanges 取消订阅
+func (w *WANCollector) UnsubscribeStatusChanges(ch chan []string) {
+	w.statusSubMu.Lock()
+	delete(w.statusSubscribers, ch)
+	w.statusSubMu.Unlock()
+	close(ch)
+}
+
+// notifyStatusChanges 通知所有订阅者（非阻塞）
+func (w *WANCollector) notifyStatusChanges(names []string) {
+	w.statusSubMu.Lock()
+	defer w.statusSubMu.Unlock()
+	for ch := range w.statusSubscribers {
+		select {
+		case ch <- names:
+		default:
+			// 订阅者消费太慢，丢弃本次通知
+		}
+	}
 }
 
 func (w *WANCollector) collect() {
@@ -156,12 +213,6 @@ func (w *WANCollector) collect() {
 
 			if s.Connected {
 				s.ISP = w.ispDetector.Detect(wc.Interface)
-				s.Latencies = w.pingWithHistory([]string{"114.114.114.114", "www.baidu.com", "1.1.1.1"}, wc.Interface)
-				if len(s.Latencies) > 0 && s.Latencies[0].Latency >= 0 {
-					s.Latency = s.Latencies[0].Latency
-				} else {
-					s.Latency = -1
-				}
 			}
 
 			w.updateHistory(wc.Interface, s.RxSpeed, s.TxSpeed)
@@ -182,6 +233,19 @@ func (w *WANCollector) collect() {
 	w.mu.Lock()
 	w.stats = stats
 	w.mu.Unlock()
+
+	// 检测连接状态变化并通知订阅者
+	var changedNames []string
+	for _, s := range stats {
+		prev, exists := w.lastConnected[s.Name]
+		if exists && prev != s.Connected {
+			changedNames = append(changedNames, s.Name)
+		}
+		w.lastConnected[s.Name] = s.Connected
+	}
+	if len(changedNames) > 0 {
+		w.notifyStatusChanges(changedNames)
+	}
 }
 
 func (w *WANCollector) updateHistory(iface string, rxSpeed, txSpeed float64) {
@@ -367,8 +431,8 @@ func pingLatency(target, iface string, count int) []int {
 	return latencies[:count]
 }
 
-// pingWithHistory 并行测试多个目标的延迟，每个目标 ping 5 次
-func (w *WANCollector) pingWithHistory(targets []string, iface string) []LatencyResult {
+// pingWithHistory 并行测试多个目标的延迟
+func (w *WANCollector) pingWithHistory(targets []string, iface string, count int) []LatencyResult {
 	type result struct {
 		target    string
 		latencies []int
@@ -378,8 +442,7 @@ func (w *WANCollector) pingWithHistory(targets []string, iface string) []Latency
 
 	for _, t := range targets {
 		go func(target string) {
-			// 每个目标 ping 5 次，返回 5 个延迟值
-			ch <- result{target: target, latencies: pingLatency(target, iface, 5)}
+			ch <- result{target: target, latencies: pingLatency(target, iface, count)}
 		}(t)
 	}
 

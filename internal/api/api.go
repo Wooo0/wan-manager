@@ -68,6 +68,7 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/game-library", h.handleGameLibrary)
 	mux.HandleFunc("/api/v1/game-library/update", h.handleGameLibraryUpdate)
 	mux.HandleFunc("/api/v1/events", h.handleEvents)
+	mux.HandleFunc("/api/v1/wan/latency", h.handleWANLatency)
 }
 
 // handleVersion 返回版本信息
@@ -707,7 +708,33 @@ func (h *APIHandler) handleISPLogo(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(svg))
 }
 
+// WanSpeedItem SSE wan_speed 单条数据（高频，仅速度/流量）
+type WanSpeedItem struct {
+	Name      string    `json:"name"`
+	RxSpeed   float64   `json:"rx_speed"`
+	TxSpeed   float64   `json:"tx_speed"`
+	RxBytes   uint64    `json:"rx_bytes"`
+	TxBytes   uint64    `json:"tx_bytes"`
+	RxHistory []float64 `json:"rx_history"`
+	TxHistory []float64 `json:"tx_history"`
+}
+
+// WanStatusItem SSE wan_status 单条数据（状态变化时推送）
+type WanStatusItem struct {
+	Name      string                   `json:"name"`
+	Interface string                   `json:"interface"`
+	Connected bool                     `json:"connected"`
+	IPv4      string                   `json:"ipv4,omitempty"`
+	IPv6      string                   `json:"ipv6,omitempty"`
+	DNS       string                   `json:"dns,omitempty"`
+	ISP       *collector.ISPInfo       `json:"isp,omitempty"`
+	Latencies []collector.LatencyResult `json:"latencies,omitempty"`
+}
+
 // handleEvents SSE 实时事件推送
+// 两个信道：
+//   wan_speed  — 每秒推送速度/流量/曲线数据
+//   wan_status — 仅在 WAN 连接状态变化时推送完整网络状态
 func (h *APIHandler) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -720,28 +747,154 @@ func (h *APIHandler) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	speedTicker := time.NewTicker(1 * time.Second)
+	defer speedTicker.Stop()
+
+	// 订阅连接状态变化通知
+	statusCh := h.wanCollector.SubscribeStatusChanges()
 
 	ctx := r.Context()
+
+	// 首次连接推送一次完整状态
+	h.pushInitialStatus(w, flusher)
+
 	for {
 		select {
 		case <-ctx.Done():
+			h.wanCollector.UnsubscribeStatusChanges(statusCh)
 			return
-		case <-ticker.C:
-			data := map[string]interface{}{
-				"type":    "update",
-				"wans":    h.wanCollector.GetStats(),
-				"clients": h.clientCollector.GetClients(),
-				"time":    time.Now().Unix(),
-			}
-			jsonData, err := json.Marshal(data)
-			if err != nil {
-				log.Printf("SSE 序列化失败: %v", err)
-				continue
-			}
-			fmt.Fprintf(w, "data: %s\n\n", jsonData)
-			flusher.Flush()
+		case <-speedTicker.C:
+			h.pushSpeedEvent(w, flusher)
+		case changes := <-statusCh:
+			h.pushStatusEvent(w, flusher, changes)
 		}
 	}
+}
+
+// pushInitialStatus 首次连接时推送所有 WAN 的完整状态
+func (h *APIHandler) pushInitialStatus(w http.ResponseWriter, flusher http.Flusher) {
+	stats := h.wanCollector.GetStats()
+	items := make([]WanStatusItem, len(stats))
+	for i, s := range stats {
+		items[i] = WanStatusItem{
+			Name:      s.Name,
+			Interface: s.Interface,
+			Connected: s.Connected,
+			IPv4:      s.IPv4,
+			IPv6:      s.IPv6,
+			DNS:       s.DNS,
+		}
+		if s.ISP != nil {
+			items[i].ISP = &collector.ISPInfo{
+				ISP:     s.ISP.ISP,
+				Country: s.ISP.Country,
+				Region:  s.ISP.Region,
+				City:    s.ISP.City,
+				IP:      s.ISP.IP,
+			}
+		}
+	}
+	h.writeSSEEvent(w, flusher, "wan_status", items)
+}
+
+// pushSpeedEvent 推送速度事件
+func (h *APIHandler) pushSpeedEvent(w http.ResponseWriter, flusher http.Flusher) {
+	stats := h.wanCollector.GetStats()
+	items := make([]WanSpeedItem, len(stats))
+	for i, s := range stats {
+		items[i] = WanSpeedItem{
+			Name:      s.Name,
+			RxSpeed:   s.RxSpeed,
+			TxSpeed:   s.TxSpeed,
+			RxBytes:   s.RxBytes,
+			TxBytes:   s.TxBytes,
+			RxHistory: s.RxHistory,
+			TxHistory: s.TxHistory,
+		}
+	}
+	h.writeSSEEvent(w, flusher, "wan_speed", items)
+}
+
+// pushStatusEvent 推送状态变化事件
+func (h *APIHandler) pushStatusEvent(w http.ResponseWriter, flusher http.Flusher, names []string) {
+	stats := h.wanCollector.GetStats()
+	statMap := make(map[string]collector.WANStats, len(stats))
+	for _, s := range stats {
+		statMap[s.Name] = s
+	}
+
+	items := make([]WanStatusItem, 0, len(names))
+	for _, name := range names {
+		s, ok := statMap[name]
+		if !ok {
+			continue
+		}
+		item := WanStatusItem{
+			Name:      s.Name,
+			Interface: s.Interface,
+			Connected: s.Connected,
+			IPv4:      s.IPv4,
+			IPv6:      s.IPv6,
+			DNS:       s.DNS,
+		}
+		if s.ISP != nil {
+			item.ISP = &collector.ISPInfo{
+				ISP:     s.ISP.ISP,
+				Country: s.ISP.Country,
+				Region:  s.ISP.Region,
+				City:    s.ISP.City,
+				IP:      s.ISP.IP,
+			}
+		}
+		items = append(items, item)
+	}
+	if len(items) > 0 {
+		h.writeSSEEvent(w, flusher, "wan_status", items)
+	}
+}
+
+// writeSSEEvent 写入一条 SSE 命名事件
+func (h *APIHandler) writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("SSE 序列化失败 (%s): %v", event, err)
+		return
+	}
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, jsonData)
+	flusher.Flush()
+}
+
+// handleWANLatency 按需延迟测试
+// GET /api/v1/wan/latency?name=wan1
+func (h *APIHandler) handleWANLatency(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, `{"error":"缺少 name 参数"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 找到对应 WAN 的接口名
+	var iface string
+	for _, s := range h.wanCollector.GetStats() {
+		if s.Name == name {
+			iface = s.Interface
+			break
+		}
+	}
+	if iface == "" {
+		http.Error(w, `{"error":"未找到指定 WAN"}`, http.StatusNotFound)
+		return
+	}
+
+	// 测试 5 次，2 秒超时
+	results := h.wanCollector.PingTargets(
+		[]string{"www.baidu.com", "1.1.1.1"},
+		iface,
+		5,
+	)
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	json.NewEncoder(w).Encode(results)
 }

@@ -23,7 +23,13 @@ type ServerConfig struct {
 
 // CollectorConfig 采集配置
 type CollectorConfig struct {
-	Interval int `toml:"interval"`
+	Interval int    `toml:"interval"`
+	MiWiFi   MiWiFiConfig `toml:"miwifi"`
+}
+
+// MiWiFiConfig 小米路由器 API 配置
+type MiWiFiConfig struct {
+	Password string `toml:"password"` // 路由器 admin 密码
 }
 
 // WANConfig WAN 口配置

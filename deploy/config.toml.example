@@ -6,6 +6,11 @@ listen_addr = ":8899"
 # 数据采集间隔（秒）
 interval = 1
 
+# 小米路由器 API（可选，用于获取 Mesh 全量设备列表）
+[collector.miwifi]
+# admin 密码（管理后台密码），留空则不启用
+password = ""
+
 # WAN 口配置
 [[wan]]
 name = "wan1"
