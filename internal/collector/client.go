@@ -282,9 +282,37 @@ func (c *ClientCollector) collect() {
 		result = append(result, client)
 	}
 
+	// 统一频段显示：如果 5G 设备中同时存在精确(5.2G/5.8G)和粗略(5G)，
+	// 则全部降级为 "5G" 保证显示一致
+	normalizeBands(result)
+
 	c.mu.Lock()
 	c.clients = result
 	c.mu.Unlock()
+}
+
+// normalizeBands 检查是否有 5G 频段显示不一致，有则统一降为 "5G"
+func normalizeBands(clients []ClientInfo) {
+	hasPrecise := false
+	hasCoarse := false
+	for _, c := range clients {
+		if c.ConnType != "wifi" || c.Band == "" {
+			continue
+		}
+		if c.Band == "5.2G" || c.Band == "5.8G" {
+			hasPrecise = true
+		} else if c.Band == "5G" {
+			hasCoarse = true
+		}
+	}
+	// 混合存在时统一粗化
+	if hasPrecise && hasCoarse {
+		for i := range clients {
+			if clients[i].Band == "5.2G" || clients[i].Band == "5.8G" {
+				clients[i].Band = "5G"
+			}
+		}
+	}
 }
 
 // updateNodeNames 从设备列表中提取 mesh AP 节点的 MAC→名称 映射

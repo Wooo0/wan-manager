@@ -1275,14 +1275,13 @@
                             <th>IP 地址</th>
                             <th>MAC 地址</th>
                             <th>连接方式</th>
-                            <th>SSID / 频段</th>
                             <th>信号强度</th>
                             <th>所属节点</th>
                         </tr>
                     </thead>
                     <tbody id="clientTable">
                         <tr>
-                            <td colspan="7" class="loading">
+                            <td colspan="6" class="loading">
                                 <div class="spinner"></div>
                                 <div>加载中...</div>
                             </td>
@@ -1748,7 +1747,7 @@
         function loadClients(data) {
             const tbody = document.getElementById('clientTable');
             if (!data || data.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无在线客户端</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无在线客户端</td></tr>';
                 return;
             }
             
@@ -1756,24 +1755,14 @@
                 const signal = client.signal || 0;
                 const sClass = signalClass(signal);
                 
-                // 连接方式：只显示 有线 / WiFi
+                // 连接方式：有线 / 精确频段（有信道时 5.2G/5.8G，否则降级 2.4G/5G）
                 let connBadge = '';
                 if (client.conn_type === 'wired') {
                     connBadge = '<span class="band-badge band-wired">有线</span>';
                 } else {
-                    connBadge = '<span class="band-badge band-wifi">WiFi</span>';
-                }
-
-                // SSID + 频段（智能拼接，避免空 / 情况）
-                let ssidBand = '';
-                if (client.ssid && client.band) {
-                    ssidBand = client.ssid + ' / ' + client.band;
-                } else if (client.ssid) {
-                    ssidBand = client.ssid;
-                } else if (client.band) {
-                    ssidBand = client.band;
-                } else {
-                    ssidBand = '-';
+                    const band = client.band || 'WiFi';
+                    const bandClass = band.includes('5') ? 'band-5g' : (band.includes('2.4') ? 'band-24g' : 'band-wifi');
+                    connBadge = `<span class="band-badge ${bandClass}">${band}</span>`;
                 }
                 
                 // 信号
@@ -1803,7 +1792,6 @@
                         <td>${client.ip || '-'}</td>
                         <td style="font-family: monospace; color: var(--text-muted);">${client.mac || '-'}</td>
                         <td>${connBadge}</td>
-                        <td style="font-size: 11px; color: var(--text-muted);">${ssidBand}</td>
                         <td>${signalHtml}</td>
                         <td style="font-size: 11px;">${nodeName}</td>
                     </tr>
